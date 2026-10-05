@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!--
+      Monochrome layer for API 33+ themed icons. The launcher tints the
+      alpha channel of this drawable, so the shape must be a silhouette.
+      The drop is cut out with an even-odd fill so the shield remains
+      recognisable without interior colour.
+    -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M54,26C47,31 39,33 33,35v18c0,16 9,25 21,30 12,-5 21,-14 21,-30V35C69,33 61,31 54,26z M54,38c-4,5 -7,8 -7,14 0,4 3,7 7,7s7,-3 7,-7c0,-6 -3,-9 -7,-14z" />
+</vector>
