@@ -42,24 +42,9 @@ When **Dynamic system colors** is on (the default), the system wallpaper scheme 
 
 ## Gradle wrapper
 
-`gradlew`, `gradlew.bat` and `gradle/wrapper/gradle-wrapper.jar` are intentionally **not** included, because they cannot be shipped as text. Only `gradle/wrapper/gradle-wrapper.properties` (Gradle 9.6.0) is checked in.
+The Gradle 9.6.0 wrapper is committed: `gradlew`, `gradlew.bat`, `gradle/wrapper/gradle-wrapper.jar` and `gradle/wrapper/gradle-wrapper.properties`. The jar's SHA-256 (`497c8c2a…a9c7`) matches the wrapper JAR checksum published for 9.6.0 at <https://gradle.org/release-checksums/>, and the properties file pins the 9.6.0 `-bin` distribution checksum.
 
-Generate the wrapper once, in an **empty folder** (or via Android Studio), so a locally installed older Gradle does not try to apply AGP:
-
-```bash
-mkdir /tmp/wrapper-gen && cd /tmp/wrapper-gen
-gradle wrapper --gradle-version 9.6.0
-```
-
-Copy `gradlew`, `gradlew.bat` and `gradle/wrapper/gradle-wrapper.jar` into the project root, then commit them (the `git add` must come first; `update-index` fails on an untracked file):
-
-```bash
-git add gradlew gradlew.bat gradle/wrapper
-git update-index --chmod=+x gradlew
-git commit -m "Add Gradle wrapper"
-```
-
-CI validates the wrapper with `gradle/actions/wrapper-validation` and will fail until the wrapper is committed.
+The scripts and jar were taken from the `v9.6.0` tag of `gradle/gradle`, not generated with `gradle wrapper`. If you prefer a locally generated wrapper, run `gradle wrapper --gradle-version 9.6.0` in an **empty folder** (a locally installed older Gradle would otherwise try to apply AGP) and copy the files over.
 
 ## Build and test
 
