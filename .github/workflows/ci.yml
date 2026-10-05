@@ -32,4 +32,28 @@ jobs:
         run: chmod +x gradlew
 
       - name: Unit tests, debug + release build, lint
-        run: ./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug --stacktrace
+        shell: bash
+        run: ./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug --continue --stacktrace 2>&1 | tee build.log
+
+      # Surface the first compiler / Gradle errors as a check annotation so a
+      # failure is readable without downloading the full log.
+      - name: Summarise failure
+        if: failure()
+        shell: bash
+        run: |
+          {
+            grep -E '^e: |^w: .*Screens|FAILED|What went wrong|Execution failed|error:|Unresolved|> Task .* FAILED' build.log | head -60
+          } > errors.txt || true
+          msg=$(sed -e 's/%/%25/g' -e 's/\r//g' errors.txt | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Gradle failure (first lines)::${msg:-no matching lines; see full log}"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            build.log
+            app/build/reports/**
+            app/build/test-results/**
+          if-no-files-found: ignore
