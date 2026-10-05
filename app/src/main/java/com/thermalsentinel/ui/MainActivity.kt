@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Menu
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Security
@@ -204,7 +204,7 @@ private fun ThermalSentinelApp(
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(
-                                Icons.AutoMirrored.Filled.Menu,
+                                Icons.Default.Menu,
                                 contentDescription = stringResource(R.string.open_navigation)
                             )
                         }
