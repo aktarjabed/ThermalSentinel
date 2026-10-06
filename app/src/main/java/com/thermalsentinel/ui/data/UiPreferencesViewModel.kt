@@ -26,4 +26,6 @@ class UiPreferencesViewModel(application: Application) : AndroidViewModel(applic
     fun setDynamicColor(value: Boolean) = viewModelScope.launch { repository.setDynamicColor(value) }
     fun setAmoled(value: Boolean) = viewModelScope.launch { repository.setAmoled(value) }
     fun setAccent(value: AccentPreset) = viewModelScope.launch { repository.setAccent(value) }
+
+    fun setWidgetStyle(value: WidgetStyle) = viewModelScope.launch { repository.setWidgetStyle(value) }
 }

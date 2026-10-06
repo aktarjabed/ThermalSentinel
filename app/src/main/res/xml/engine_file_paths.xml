@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the engine's own export cache directory is shareable. -->
+<paths>
+    <cache-path name="engine_exports" path="engine-exports/" />
+</paths>

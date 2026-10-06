@@ -45,7 +45,12 @@ data class UiPreferences(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val dynamicColor: Boolean = true,
     val amoled: Boolean = false,
-    val accent: AccentPreset = AccentPreset.BLUE
+    val accent: AccentPreset = AccentPreset.BLUE,
+    /**
+     * Widget appearance. Persisted since the engine phase: the widget reads it,
+     * so the Widgets screen is no longer a contract-only surface.
+     */
+    val widgetStyle: WidgetStyle = WidgetStyle.SYSTEM
 )
 
 class UiPreferencesRepository(private val context: Context) {
@@ -54,6 +59,7 @@ class UiPreferencesRepository(private val context: Context) {
         val dynamicColor = booleanPreferencesKey("dynamic_color")
         val amoled = booleanPreferencesKey("amoled")
         val accent = stringPreferencesKey("accent")
+        val widgetStyle = stringPreferencesKey("widget_style")
     }
 
     /**
@@ -75,7 +81,8 @@ class UiPreferencesRepository(private val context: Context) {
                 themeMode = ThemeMode.fromStorage(values[Keys.themeMode]),
                 dynamicColor = values[Keys.dynamicColor] ?: true,
                 amoled = values[Keys.amoled] ?: false,
-                accent = AccentPreset.fromStorage(values[Keys.accent])
+                accent = AccentPreset.fromStorage(values[Keys.accent]),
+                widgetStyle = WidgetStyle.fromStorage(values[Keys.widgetStyle])
             )
         }
 
@@ -103,4 +110,7 @@ class UiPreferencesRepository(private val context: Context) {
 
     suspend fun setAccent(value: AccentPreset) =
         editSafely { it[Keys.accent] = value.storageValue }
+
+    suspend fun setWidgetStyle(value: WidgetStyle) =
+        editSafely { it[Keys.widgetStyle] = value.storageValue }
 }

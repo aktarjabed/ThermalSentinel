@@ -1,7 +1,7 @@
 package com.thermalsentinel.ui.navigation
 
 import androidx.annotation.StringRes
-import com.thermalsentinel.ui.R
+import com.thermalsentinel.R
 
 object Routes {
     const val DASHBOARD = "dashboard"

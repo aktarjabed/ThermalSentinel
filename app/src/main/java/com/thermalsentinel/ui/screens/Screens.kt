@@ -88,7 +88,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
-import com.thermalsentinel.ui.BuildConfig
+import com.thermalsentinel.BuildConfig
 import com.thermalsentinel.ui.components.FeatureCard
 import com.thermalsentinel.ui.components.Gauge
 import com.thermalsentinel.ui.components.KeyValueRow
@@ -101,7 +101,6 @@ import com.thermalsentinel.ui.components.StatusPill
 import com.thermalsentinel.ui.components.TimelineRow
 import com.thermalsentinel.ui.data.AccentPreset
 import com.thermalsentinel.ui.data.ThemeMode
-import com.thermalsentinel.ui.data.ThermalStatusBand
 import com.thermalsentinel.ui.data.UiPreferences
 import com.thermalsentinel.ui.data.WidgetStyle
 import com.thermalsentinel.ui.navigation.Routes
@@ -109,28 +108,33 @@ import com.thermalsentinel.ui.navigation.Routes
 import com.thermalsentinel.ui.theme.seed
 import java.util.Locale
 import kotlin.math.roundToInt
-
-private val thermalPoints = listOf(
-    35.8f, 36.2f, 36.7f, 37.1f, 36.5f, 38.4f, 39.2f, 38.6f, 40.1f, 41.3f, 40.2f, 39.5f, 38.4f
-)
-private val thermalMin = thermalPoints.min()
-private val thermalMax = thermalPoints.max()
-private val thermalAvg = thermalPoints.average().toFloat()
-private val thermalLast = thermalPoints.last()
-
-private val historyPoints = listOf(
-    35.1f, 36.4f, 37.0f, 36.8f, 37.5f, 39.1f, 38.4f, 40.2f, 41.8f, 40.7f, 39.9f, 38.5f, 37.8f, 36.9f
-)
-private val historyMin = historyPoints.min()
-private val historyMax = historyPoints.max()
-private val historyAvg = historyPoints.average().toFloat()
-
-/**
- * Gauge progress for the current reading, normalised against the chart's
- * 34–44°C plotting window. Used by both the Dashboard and Thermal gauges so
- * they cannot disagree about the same value.
- */
-private val thermalGaugeProgress = (thermalLast - 34f) / 10f
+import android.content.Intent
+import android.os.Build
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.thermalsentinel.engine.alert.AlertLevel
+import com.thermalsentinel.engine.diagnostics.CheckState
+import com.thermalsentinel.engine.diagnostics.ReadinessCheck
+import com.thermalsentinel.engine.domain.BatteryHealth
+import com.thermalsentinel.engine.domain.Reading
+import com.thermalsentinel.engine.domain.ThermalFormatting
+import com.thermalsentinel.engine.domain.ThermalStatusBand
+import com.thermalsentinel.engine.domain.displayLabel
+import com.thermalsentinel.engine.export.ExportOutcome
+import com.thermalsentinel.engine.monitoring.HistoryMath
+import com.thermalsentinel.engine.monitoring.RetentionPolicy
+import com.thermalsentinel.ui.components.DividerRow
+import com.thermalsentinel.ui.components.ThermalHistoryChart
+import com.thermalsentinel.ui.data.UiPreferencesViewModel
+import com.thermalsentinel.ui.live.AlertRulesViewModel
+import com.thermalsentinel.ui.live.BatteryViewModel
+import com.thermalsentinel.ui.live.DiagnosticsViewModel
+import com.thermalsentinel.ui.live.HistoryRange
+import com.thermalsentinel.ui.live.HistoryViewModel
+import com.thermalsentinel.ui.live.MonitoringViewModel
+import com.thermalsentinel.ui.live.ThermalViewModel
 
 /**
  * Formats a temperature for display. Locale-aware so decimal separators follow
@@ -156,6 +160,151 @@ private fun ScreenContent(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+// ---------------------------------------------------------------------------
+// Availability-aware value rendering shared by the live screens.
+//
+// Every helper below takes a `Reading` and renders the *reason* a value is
+// missing instead of a zero, because "0 mA" and "this device has no current
+// sensor" are different facts.
+// ---------------------------------------------------------------------------
+
+private fun Reading<*>.absenceLabel(): String =
+    absenceReason?.displayLabel ?: ThermalFormatting.UNAVAILABLE_MARKER
+
+/** Renders the absence reason when there is no reading at all. */
+private fun Reading<*>?.absenceLabelOrMarker(): String =
+    this?.absenceLabel() ?: ThermalFormatting.UNAVAILABLE_MARKER
+
+private fun <T> Reading<T>?.presentOrNull(): T? = this?.valueOrNull
+
+private fun temperatureText(reading: Reading<Float>?): String =
+    reading.presentOrNull()?.let { ThermalFormatting.temperatureCelsius(it) }
+        ?: reading.absenceLabelOrMarker()
+
+private fun temperatureValueText(value: Float?): String = ThermalFormatting.temperatureCelsius(value)
+
+private fun headroomText(reading: Reading<Float>?): String =
+    // Headroom is a ratio between readings, so it is never rendered with a degree sign.
+    reading.presentOrNull()?.let { ThermalFormatting.headroom(it) }
+        ?: reading.absenceLabelOrMarker()
+
+private fun percentText(reading: Reading<Int>?): String =
+    reading.presentOrNull()?.let { ThermalFormatting.percent(it) }
+        ?: reading.absenceLabelOrMarker()
+
+private fun voltsText(reading: Reading<Int>?): String =
+    reading.presentOrNull()?.let { ThermalFormatting.volts(it) }
+        ?: reading.absenceLabelOrMarker()
+
+private fun milliAmpsText(reading: Reading<Int>?): String =
+    reading.presentOrNull()?.let { ThermalFormatting.milliAmps(it) }
+        ?: reading.absenceLabelOrMarker()
+
+private fun microAmpHoursText(reading: Reading<Int>?): String =
+    reading.presentOrNull()?.let { ThermalFormatting.microAmpHours(it) }
+        ?: reading.absenceLabelOrMarker()
+
+private fun intText(reading: Reading<Int>?): String =
+    reading.presentOrNull()?.toString() ?: reading.absenceLabelOrMarker()
+
+private fun textText(reading: Reading<String>?): String =
+    reading.presentOrNull() ?: reading.absenceLabelOrMarker()
+
+private fun booleanText(reading: Reading<Boolean>?): String =
+    reading.presentOrNull()?.let { if (it) "Yes" else "No" } ?: reading.absenceLabelOrMarker()
+
+private fun labelText(reading: Reading<ThermalStatusBand>?): String =
+    reading.presentOrNull()?.label ?: reading.absenceLabelOrMarker()
+
+private fun <T> enumText(reading: Reading<T>?, label: (T) -> String): String =
+    reading.presentOrNull()?.let(label) ?: reading.absenceLabelOrMarker()
+
+/** Age of a measurement as a positive phrase, never as an implied freshness. */
+private fun ageText(timestampMillis: Long, nowMillis: Long = System.currentTimeMillis()): String {
+    val age = (nowMillis - timestampMillis).coerceAtLeast(0L)
+    return when {
+        age < 90_000L -> "just now"
+        age < 3_600_000L -> "${age / 60_000L} min ago"
+        age < 86_400_000L -> "${age / 3_600_000L} h ago"
+        else -> "${age / 86_400_000L} d ago"
+    }
+}
+
+/** Plotting window with one degree of padding, so the line never touches the edge. */
+private fun paddedRange(points: List<HistoryMath.SeriesPoint>): ClosedFloatingPointRange<Float> {
+    val values = points.mapNotNull { it.temperatureC }
+    if (values.isEmpty()) return 30f..45f
+    val low = (values.min() - 1f).roundToInt().toFloat()
+    val high = (values.max() + 1f).roundToInt().toFloat()
+    return low..(if (high > low) high else low + 1f)
+}
+
+private fun alertPillLabel(level: AlertLevel): String = when (level) {
+    AlertLevel.NORMAL -> "ALERT: NORMAL"
+    AlertLevel.WARNING -> "ALERT: WARNING"
+    AlertLevel.CRITICAL -> "ALERT: CRITICAL"
+}
+
+@Composable
+private fun NoticeCard(text: String, isError: Boolean = false, modifier: Modifier = Modifier) {
+    val container = if (isError) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.secondaryContainer
+    }
+    val content = if (isError) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = container, contentColor = content)
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(14.dp),
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+@Composable
+private fun ReadinessRow(check: ReadinessCheck) {
+    val tint = when (check.state) {
+        CheckState.OK -> MaterialTheme.colorScheme.primary
+        CheckState.WARNING -> MaterialTheme.colorScheme.tertiary
+        CheckState.FAILED -> MaterialTheme.colorScheme.error
+        CheckState.UNKNOWN -> MaterialTheme.colorScheme.outline
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Icon(
+                if (check.state == CheckState.OK) Icons.Default.CheckCircle else Icons.Default.Info,
+                contentDescription = null,
+                tint = tint
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(check.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            Text(check.state.label, style = MaterialTheme.typography.bodySmall, color = tint)
+        }
+        Text(
+            check.detail,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 34.dp)
+        )
+        check.remedy?.let { remedy ->
+            Text(
+                remedy,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 34.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun ScreenHeader(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -163,158 +312,476 @@ private fun ScreenHeader(title: String, subtitle: String) {
         Text(subtitle, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
-
 @Composable
 fun DashboardScreen(onNavigate: (String) -> Unit = {}) {
+    val monitoring: MonitoringViewModel = viewModel()
+    val enabled by monitoring.monitoringEnabled.collectAsStateWithLifecycle()
+    val running by monitoring.serviceRunning.collectAsStateWithLifecycle()
+    val sample by monitoring.latestSample.collectAsStateWithLifecycle()
+    val alertState by monitoring.alertState.collectAsStateWithLifecycle()
+    val stopReason by monitoring.lastStopReason.collectAsStateWithLifecycle()
+    val message by monitoring.message.collectAsStateWithLifecycle()
+
+    // Monitoring is resumed only from a screen the user is actually looking at.
+    // Nothing here runs from Application.onCreate, because a foreground-service
+    // start from a background context is rejected by Android 12 and above.
+    LaunchedEffect(Unit) { monitoring.resumeIfRequested() }
+
+    val current = sample
+    val battery = current?.battery
+    val thermal = current?.thermal
+    val temperature = battery?.temperatureC
+    val gaugeProgress = (((temperature?.valueOrNull ?: 34f) - 34f) / 10f).coerceIn(0f, 1f)
+    val currentMessage = message
+
     ScreenContent {
         ScreenHeader(
             "Device overview",
-            "A single local-first control surface for thermal, battery, network and security"
+            "Live state from the local monitoring engine — no account, no upload"
         )
-        PreviewBanner()
+
+        when {
+            current == null -> NoticeCard(
+                "Nothing has been measured on this device yet. Turn monitoring on to start recording " +
+                    "battery temperature, platform thermal status and charge state."
+            )
+
+            enabled && !running -> NoticeCard(
+                "Monitoring is paused (${stopReason.label.lowercase()}). It resumes when you turn it back " +
+                    "on; recorded history is kept."
+            )
+
+            running -> NoticeCard("Monitoring is running. Every sample stays on this device.")
+
+            else -> Unit
+        }
+
+        if (currentMessage != null) {
+            NoticeCard(currentMessage, isError = true)
+            TextButton(onClick = monitoring::dismissMessage) { Text("Dismiss") }
+        }
+
         FeatureCard(
             title = "Thermal state",
-            subtitle = "Preview sample · battery sensor not connected",
+            subtitle = when {
+                current == null -> "No measurement yet"
+                running -> "Latest sample ${ageText(current.timestampMillis)}"
+                else -> "Last stored sample ${ageText(current.timestampMillis)} · monitoring is off"
+            },
             icon = { Icon(Icons.Default.Thermostat, null) }
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Gauge(thermalGaugeProgress, "normal", celsius(thermalLast), size = 110.dp)
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(9.dp)
-                ) {
-                    StatusPill("THERMAL: NORMAL", true)
-                    KeyValueRow("Android thermal status", "NONE")
-                    KeyValueRow("Peak (window)", celsius(thermalMax))
-                    KeyValueRow("Sampling", "not active")
+                Gauge(
+                    progress = gaugeProgress,
+                    label = if (temperature?.valueOrNull == null) "unavailable" else "battery",
+                    value = temperatureText(temperature),
+                    size = 110.dp
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    // "positive" is reserved for the normal state only: a warning
+                    // must never be rendered with the affirmative colour.
+                    StatusPill(alertPillLabel(alertState.level), alertState.level == AlertLevel.NORMAL)
+                    KeyValueRow("Battery temperature", temperatureText(temperature))
+                    KeyValueRow("Android thermal status", labelText(thermal?.thermalStatus))
+                    KeyValueRow("Headroom (1.0 = severe)", headroomText(thermal?.headroom))
+                    KeyValueRow("Charge level", percentText(battery?.batteryPercent))
                 }
             }
         }
+
+        FeatureCard(
+            title = "Monitoring control",
+            subtitle = "Foreground service with an ongoing notification",
+            icon = { Icon(Icons.Default.Shield, null) }
+        ) {
+            SettingSwitch(
+                title = "Thermal & battery monitoring",
+                subtitle = if (running) "Running · adaptive sampling (5–60 s by state)"
+                else "Stopped · no new samples are recorded",
+                checked = enabled,
+                onCheckedChange = { wanted ->
+                    if (wanted) monitoring.startMonitoring() else monitoring.stopMonitoring()
+                }
+            )
+            if (enabled && !running) {
+                TextButton(onClick = monitoring::resumeIfRequested, modifier = Modifier.fillMaxWidth()) {
+                    Text("Resume monitoring now")
+                }
+            }
+            Text(
+                "Monitoring reads battery temperature, Android thermal status, headroom, charge level, " +
+                    "voltage, current, health and charging state. It never changes system settings, never " +
+                    "force-stops apps and never transmits anything.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         QuickAccessCard(onOpen = { onNavigate(Routes.QUICK_ACCESS) })
+
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard(
                 title = "Battery",
-                value = "78%",
-                subtitle = "Preview charge state",
+                value = percentText(battery?.batteryPercent),
+                subtitle = if (current == null) "No measurement yet" else "Measured ${ageText(current.timestampMillis)}",
                 icon = { Icon(Icons.Default.BatteryFull, null) },
                 modifier = Modifier.weight(1f)
             )
             MetricCard(
-                title = "VPN",
+                title = "Network protection",
                 value = "OFF",
-                subtitle = "Protection not connected",
+                subtitle = "Not implemented in this build",
                 icon = { Icon(Icons.Default.WifiOff, null) },
                 modifier = Modifier.weight(1f)
             )
         }
+
         FeatureCard(
             title = "Risk snapshot",
-            subtitle = "UI model for the future correlation engine",
+            subtitle = "The correlation engine is not part of the monitoring core",
             icon = { Icon(Icons.Default.Shield, null) }
         ) {
-            RiskRow("Thermal load", "Low", 0.22f)
-            RiskRow("Charging heat", "Low", 0.18f)
-            RiskRow("Network exposure", "Unknown", 0.48f)
-            RiskRow("App risk", "Unknown", 0.42f)
+            KeyValueRow("Thermal load", "Not scored yet")
+            KeyValueRow("Charging heat", "Not scored yet")
+            KeyValueRow("Network exposure", "No VPN engine in this build")
+            KeyValueRow("App risk", "No scanner engine in this build")
+            Text(
+                "Each row reports the state of its engine instead of a fabricated score.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        SectionTitle("Upcoming protection modules", "All navigation targets are already wired into the UI.")
-        LockedFeatureRow("Local VPN firewall", "Per-app network policy, blocklists and traffic attribution", { Icon(Icons.Default.Lan, null) })
-        LockedFeatureRow("DNS protection", "Ad, tracker, phishing and malware domain filtering", { Icon(Icons.Default.Dns, null) })
-        LockedFeatureRow("Security scanner", "Evidence-weighted app risk assessment", { Icon(Icons.Default.VerifiedUser, null) })
-        LockedFeatureRow("Thermal history", "24h / 7d trends, heating events and charging peaks", { Icon(Icons.Default.History, null) })
+
+        SectionTitle(
+            "Not implemented in this build",
+            "Listed so the navigation can never imply that a module is active."
+        )
+        LockedFeatureRow(
+            "Local VPN firewall",
+            "Per-app network policy, blocklists and traffic attribution",
+            { Icon(Icons.Default.Lan, null) }
+        )
+        LockedFeatureRow(
+            "DNS protection",
+            "Ad, tracker, phishing and malware domain filtering",
+            { Icon(Icons.Default.Dns, null) }
+        )
+        LockedFeatureRow(
+            "Security scanner",
+            "Evidence-weighted app risk assessment",
+            { Icon(Icons.Default.VerifiedUser, null) }
+        )
+        LockedFeatureRow(
+            "Usage correlation",
+            "Needs the Usage Access grant from Android Settings; not requested in this build",
+            { Icon(Icons.Default.Visibility, null) }
+        )
     }
 }
-
 @Composable
 fun ThermalScreen() {
-    var range by rememberSaveable { mutableStateOf(0) }
+    val viewModel: ThermalViewModel = viewModel()
+    val sample by viewModel.latestSample.collectAsStateWithLifecycle()
+    val series by viewModel.series.collectAsStateWithLifecycle()
+    val statistics by viewModel.statistics.collectAsStateWithLifecycle()
+    val events by viewModel.events.collectAsStateWithLifecycle()
+    val rules by viewModel.rules.collectAsStateWithLifecycle()
+
+    val current = sample
+    val battery = current?.battery
+    val thermal = current?.thermal
+    val temperature = battery?.temperatureC
+    val gaugeProgress = (((temperature?.valueOrNull ?: 34f) - 34f) / 10f).coerceIn(0f, 1f)
+    val chartRange = paddedRange(series)
+    val windowEnd = System.currentTimeMillis()
+    val windowStart = windowEnd - RetentionPolicy.DAY_MILLIS
+    // The threshold plotted is the one the engine actually alerts on right now,
+    // including the separate charging threshold when it applies.
+    val activeThreshold = rules.effectiveWarningThresholdC(battery?.onExternalPower == true)
+
     ScreenContent {
-        ScreenHeader("Thermal Monitor", "Battery temperature, Android thermal status, headroom and event history")
-        FeatureCard("Current thermal signal", "Preview values only", { Icon(Icons.Default.Thermostat, null) }) {
+        ScreenHeader(
+            "Thermal Monitor",
+            "Battery temperature, Android thermal status, headroom and recorded events"
+        )
+
+        FeatureCard(
+            title = "Current reading",
+            subtitle = when {
+                current == null -> "No measurement yet"
+                else -> "Measured ${ageText(current.timestampMillis)}"
+            },
+            icon = { Icon(Icons.Default.Thermostat, null) }
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Gauge(thermalGaugeProgress, "battery", celsius(thermalLast), size = 110.dp)
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    StatusPill("NORMAL", true)
-                    KeyValueRow("Thermal status", "NONE")
-                    KeyValueRow("Peak (window)", celsius(thermalMax))
-                    KeyValueRow("Headroom", "not connected")
+                Gauge(
+                    progress = gaugeProgress,
+                    label = if (temperature?.valueOrNull == null) "unavailable" else "battery",
+                    value = temperatureText(temperature),
+                    size = 110.dp
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    KeyValueRow("Battery temperature", temperatureText(temperature))
+                    KeyValueRow("Android thermal status", labelText(thermal?.thermalStatus))
+                    KeyValueRow("Headroom (1.0 = severe)", headroomText(thermal?.headroom))
+                    KeyValueRow("Power source", enumText(battery?.plugged) { it.label })
+                }
+            }
+            Text(
+                "Battery temperature comes from the battery broadcast and describes the battery, not the " +
+                    "whole device. Headroom is a platform ratio between 0 and 1 or more; it is not a temperature.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        FeatureCard(
+            title = "Temperature trend",
+            subtitle = "Last 24 hours · raw samples; a break in the line is a period with no measurement",
+            icon = { Icon(Icons.Default.GraphicEq, null) }
+        ) {
+            ThermalHistoryChart(
+                points = series,
+                minValue = chartRange.start,
+                maxValue = chartRange.endInclusive,
+                windowStartMillis = windowStart,
+                windowEndMillis = windowEnd,
+                thresholdC = activeThreshold,
+                maxGapMillis = viewModel.maxGapForChart()
+            )
+            KeyValueRow("Minimum", temperatureValueText(statistics?.minTemperatureC))
+            KeyValueRow("Maximum", temperatureValueText(statistics?.maxTemperatureC))
+            KeyValueRow("Average", temperatureValueText(statistics?.averageTemperatureC))
+            KeyValueRow("Warning threshold", celsius(activeThreshold))
+            val above = statistics?.timeAboveThresholdMillis
+            KeyValueRow(
+                "Time above threshold",
+                when {
+                    statistics == null -> "No data"
+                    above == null -> "Not derivable"
+                    else -> ThermalFormatting.duration(above)
+                }
+            )
+            Text(
+                "${statistics?.sampleCount ?: 0} samples · ${statistics?.gapCount ?: 0} gaps longer than " +
+                    "2.5× the requested interval",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        FeatureCard(
+            title = "Recorded events",
+            subtitle = "Written by the engine when something changed",
+            icon = { Icon(Icons.Default.Speed, null) }
+        ) {
+            if (events.isEmpty()) {
+                Text(
+                    "No events recorded yet. Heating, cooling, threshold and charging transitions appear " +
+                        "here after monitoring has been running for a while.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                events.take(8).forEach { event ->
+                    TimelineRow(
+                        time = ThermalFormatting.clock(event.timestampMillis),
+                        title = event.type.label,
+                        detail = event.detail
+                            ?: event.temperatureC?.let { celsius(it) }
+                            ?: "Recorded"
+                    )
                 }
             }
         }
-        FeatureCard("Temperature trend", "Synthetic UI dataset for chart layout", { Icon(Icons.Default.GraphicEq, null) }) {
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                listOf("24h", "7d", "30d").forEachIndexed { index, label ->
-                    SegmentedButton(
-                        selected = range == index,
-                        onClick = { range = index },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = 3)
-                    ) {
-                        Text(label)
-                    }
+
+        FeatureCard(
+            title = "Active alert policy",
+            subtitle = "Persisted rules the engine is evaluating right now",
+            icon = { Icon(Icons.Default.Notifications, null) }
+        ) {
+            KeyValueRow(
+                "Warning",
+                if (rules.warningEnabled) {
+                    "${celsius(rules.warningThresholdC)} · clears at ${celsius(rules.warningRecoveryC)}"
+                } else {
+                    "Disabled"
                 }
+            )
+            KeyValueRow(
+                "Critical",
+                if (rules.criticalEnabled) {
+                    "${celsius(rules.criticalThresholdC)} · de-escalates at ${celsius(rules.criticalRecoveryC)}"
+                } else {
+                    "Disabled"
+                }
+            )
+            KeyValueRow("Repeat cooldown", "${rules.cooldownMinutes} min")
+            KeyValueRow(
+                "Platform bands",
+                rules.statusBandTriggers.joinToString { it.label }.ifEmpty { "None selected" }
+            )
+            if (battery?.onExternalPower == true) {
+                Text(
+                    if (rules.chargingWarningEnabled) {
+                        "Charging rule active: the warning threshold is ${celsius(rules.chargingWarningThresholdC)} " +
+                            "while on external power."
+                    } else {
+                        "Charging rule is off, so the normal warning threshold applies while charging."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            LineChart(thermalPoints, 34f, 44f)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                KeyValueRow("Minimum", celsius(thermalMin), modifier = Modifier.weight(1f))
-                KeyValueRow("Maximum", celsius(thermalMax), modifier = Modifier.weight(1f))
-            }
-            KeyValueRow("Average", celsius(thermalAvg))
-        }
-        FeatureCard("Thermal events", "Rise speed, duration and threshold crossings", { Icon(Icons.Default.Speed, null) }) {
-            TimelineRow("14:42", "Fast heating event", "+3.4°C in 7 minutes")
-            TimelineRow("12:18", "Charging peak", "39.8°C while charging")
-            TimelineRow("09:06", "Cooling event", "−4.1°C in 13 minutes")
-        }
-        FeatureCard("Alert policy", "Detailed thresholds live in Alert Rules", { Icon(Icons.Default.Notifications, null) }) {
-            SettingSwitch("High-temperature warning", "Notify when configured warning condition is reached", false)
-            SettingSwitch("Critical thermal warning", "Escalate only for platform-supported critical states", true)
-            SettingSwitch("Cooling guidance", "Show user-safe cooling recommendations", true)
         }
     }
 }
-
 @Composable
 fun BatteryScreen() {
+    val viewModel: BatteryViewModel = viewModel()
+    val sample by viewModel.latestSample.collectAsStateWithLifecycle()
+    val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val openSession by viewModel.openSession.collectAsStateWithLifecycle()
+    val statistics by viewModel.statistics.collectAsStateWithLifecycle()
+
+    val current = sample
+    val battery = current?.battery
+    val temperature = battery?.temperatureC
+
     ScreenContent {
-        ScreenHeader("Battery & Charging", "Battery state, current/voltage, sessions, health signals and charging heat")
+        ScreenHeader(
+            "Battery & Charging",
+            "Battery state, current and voltage, charging sessions and the health signals this device exposes"
+        )
+
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard("Charge", "78%", "Preview", { Icon(Icons.Default.BatteryFull, null) }, Modifier.weight(1f))
-            MetricCard("Voltage", "4.12 V", "Preview", { Icon(Icons.Default.Bolt, null) }, Modifier.weight(1f))
+            MetricCard(
+                title = "Charge",
+                value = percentText(battery?.batteryPercent),
+                subtitle = when {
+                    current == null -> "No measurement yet"
+                    battery?.onExternalPower == true -> "On external power"
+                    else -> "On battery"
+                },
+                icon = { Icon(Icons.Default.BatteryFull, null) },
+                modifier = Modifier.weight(1f)
+            )
+            MetricCard(
+                title = "Voltage",
+                value = voltsText(battery?.voltageMilliVolts),
+                subtitle = "BatteryManager voltage",
+                icon = { Icon(Icons.Default.Bolt, null) },
+                modifier = Modifier.weight(1f)
+            )
         }
-        FeatureCard("Battery health", "Only device-supported signals will be shown by the future engine", { Icon(Icons.Default.VerifiedUser, null) }) {
-            KeyValueRow("Health state", "Good")
-            KeyValueRow("Cycle count", "Not available")
-            KeyValueRow("Design capacity", "Not available")
-            KeyValueRow("Temperature", celsius(thermalLast))
-        }
-        FeatureCard("Charging session", "Session-level statistics are represented here", { Icon(Icons.Default.Bolt, null) }) {
-            KeyValueRow("Session", "00:38:12")
-            KeyValueRow("Average temperature", "38.7°C")
-            KeyValueRow("Peak temperature", "40.3°C")
-            KeyValueRow("Peak current", "Not connected")
-        }
-        FeatureCard("Charging behavior", "Future controls", { Icon(Icons.Default.Tune, null) }) {
-            SettingSwitch("Charging heat markers", "Place charging markers on historical temperature charts", true)
-            SettingSwitch("Peak notifications", "Notify after a sustained charging heat peak", false)
-        }
+
         FeatureCard(
-            "Low-Temperature Mode",
-            "Guidance only. Automatic brightness reduction is deliberately kept outside the monitoring engine.",
-            { Icon(Icons.Default.AcUnit, null) }
+            title = "Temperature",
+            subtitle = "The same reading the alert engine evaluates",
+            icon = { Icon(Icons.Default.Thermostat, null) }
+        ) {
+            KeyValueRow("Battery temperature", temperatureText(temperature))
+            KeyValueRow("Charging status", enumText(battery?.chargingStatus) { it.label })
+            KeyValueRow("Power source", enumText(battery?.plugged) { it.label })
+            KeyValueRow("Measured", current?.let { ageText(it.timestampMillis) } ?: "Not yet")
+        }
+
+        FeatureCard(
+            title = "Current draw",
+            subtitle = "Unsigned values are never invented: an unsupported sensor reports its absence reason",
+            icon = { Icon(Icons.Default.Bolt, null) }
+        ) {
+            KeyValueRow("Current now", milliAmpsText(battery?.currentMicroAmps))
+            KeyValueRow("Current average", milliAmpsText(battery?.averageCurrentMicroAmps))
+            KeyValueRow("Charge counter", microAmpHoursText(battery?.chargeCounterMicroAmpHours))
+            KeyValueRow(
+                "Energy counter",
+                battery?.energyCounterNanoWattHours?.valueOrNull?.let { "$it nWh" }
+                    ?: battery?.energyCounterNanoWattHours?.absenceLabel()
+                    ?: "—"
+            )
+        }
+
+        FeatureCard(
+            title = "Battery health",
+            subtitle = "Reported by the battery broadcast and BatteryManager properties",
+            icon = { Icon(Icons.Default.VerifiedUser, null) }
+        ) {
+            KeyValueRow("Health state", enumText(battery?.health) { it.label })
+            KeyValueRow("Cycle count", intText(battery?.cycleCount))
+            KeyValueRow("Capacity level", enumText(battery?.capacityLevel) { it.label })
+            KeyValueRow("Technology", textText(battery?.technology))
+            KeyValueRow("Battery present", booleanText(battery?.present))
+            Text(
+                "Cycle count exists on Android 14 and above, and capacity level on Android 16 and above, " +
+                    "and some devices still report neither. Where the platform is silent the value above " +
+                    "says so instead of showing a zero.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        FeatureCard(
+            title = "Charging session",
+            subtitle = "Sessions are derived from the platform charging state, not from a user timer",
+            icon = { Icon(Icons.Default.Timer, null) }
+        ) {
+            val open = openSession
+            if (open == null) {
+                Text(
+                    "No charging session is in progress. The last session, its duration and its peak " +
+                        "temperature appear here when the device is plugged in.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                KeyValueRow("Started", ThermalFormatting.clock(open.startMillis))
+                KeyValueRow("Duration", ThermalFormatting.duration(open.durationMillis))
+                KeyValueRow("Charge", "${open.startPercent?.let { "$it%" } ?: "—"} → ${open.endPercent?.let { "$it%" } ?: "—"}")
+                KeyValueRow("Peak temperature", temperatureValueText(open.peakTemperatureC))
+                KeyValueRow("Average temperature", temperatureValueText(open.averageTemperatureC))
+                KeyValueRow("Samples", open.sampleCount.toString())
+            }
+            if (sessions.size > 1) {
+                DividerRow()
+                Text("Earlier sessions", style = MaterialTheme.typography.titleSmall)
+                sessions.drop(1).take(4).forEach { session ->
+                    TimelineRow(
+                        time = ThermalFormatting.clock(session.startMillis),
+                        title = "Peak ${temperatureValueText(session.peakTemperatureC)}",
+                        detail = "${ThermalFormatting.duration(session.durationMillis)} · ${session.sampleCount} samples"
+                    )
+                }
+            }
+        }
+
+        FeatureCard(
+            title = "Charging behaviour recorded so far",
+            subtitle = "Measured, not estimated",
+            icon = { Icon(Icons.Default.Tune, null) }
+        ) {
+            KeyValueRow("Samples taken while charging", (statistics?.chargingSampleCount ?: 0).toString())
+            KeyValueRow("Maximum temperature today", temperatureValueText(statistics?.maxTemperatureC))
+            KeyValueRow("Records over 40 °C today", "Counted in Thermal History")
+        }
+
+        FeatureCard(
+            title = "Low-Temperature Mode",
+            subtitle = "Guidance only. The monitoring engine never changes a system setting.",
+            icon = { Icon(Icons.Default.AcUnit, null) }
         ) {
             SettingSwitch(
-                "Show cold-condition guidance",
-                "Display practical low-temperature advice without changing any system setting",
-                true
+                title = "Cold-condition guidance",
+                subtitle = "Platform health state reports COLD when the battery is too cold to charge normally",
+                checked = battery?.health?.valueOrNull == BatteryHealth.COLD,
+                onCheckedChange = null
             )
-            LockedFeatureRow(
-                "Automatic brightness reduction",
-                "Requires an explicit Settings.System.canWrite() authorization flow with its own setup screen. " +
-                    "Not part of the ordinary monitoring engine.",
-                { Icon(Icons.Default.BrightnessAuto, null) }
+            Text(
+                "The row above mirrors the platform health flag; it is not a switch this app can turn on. " +
+                    "Automatic brightness or charging changes would require separate system authorisations " +
+                    "and are deliberately outside this engine.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -590,33 +1057,155 @@ fun ActivityScreen() {
         }
     }
 }
-
 @Composable
 fun HistoryScreen() {
-    var range by rememberSaveable { mutableStateOf(0) }
+    val viewModel: HistoryViewModel = viewModel()
+    val context = LocalContext.current
+    val selectedRange by viewModel.range.collectAsStateWithLifecycle()
+    val series by viewModel.series.collectAsStateWithLifecycle()
+    val statistics by viewModel.statistics.collectAsStateWithLifecycle()
+    val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val outcome by viewModel.exportState.collectAsStateWithLifecycle()
+    val rules by viewModel.rules.collectAsStateWithLifecycle()
+
+    val windowEnd = System.currentTimeMillis()
+    val windowStart = windowEnd - selectedRange.windowMillis
+    val chartRange = paddedRange(series)
+    val currentOutcome = outcome
+    val above = statistics?.timeAboveThresholdMillis
+
     ScreenContent {
-        ScreenHeader("Thermal History", "24-hour and multi-day thermal insights with charging markers")
-        FeatureCard("History range", "Preview data only", { Icon(Icons.Default.History, null) }) {
+        ScreenHeader(
+            "Thermal History",
+            "Raw samples for 24 hours, hourly averages for 90 days, daily averages for 400 days"
+        )
+
+        FeatureCard(
+            title = "Range",
+            subtitle = "Longer ranges read compacted buckets, so they describe averages rather than moments",
+            icon = { Icon(Icons.Default.History, null) }
+        ) {
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                listOf("24h", "7d", "30d").forEachIndexed { index, label ->
+                HistoryRange.entries.forEachIndexed { index, candidate ->
                     SegmentedButton(
-                        selected = range == index,
-                        onClick = { range = index },
-                        shape = SegmentedButtonDefaults.itemShape(index = index, count = 3)
+                        selected = candidate == selectedRange,
+                        onClick = { viewModel.selectRange(candidate) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = HistoryRange.entries.size
+                        )
                     ) {
-                        Text(label)
+                        Text(candidate.label)
                     }
                 }
             }
-            LineChart(historyPoints, 34f, 44f)
-            KeyValueRow("Minimum", celsius(historyMin))
-            KeyValueRow("Maximum", celsius(historyMax))
-            KeyValueRow("Average", celsius(historyAvg))
-            KeyValueRow("Time above warning", "00:18:24")
+            ThermalHistoryChart(
+                points = series,
+                minValue = chartRange.start,
+                maxValue = chartRange.endInclusive,
+                windowStartMillis = windowStart,
+                windowEndMillis = windowEnd,
+                thresholdC = rules.warningThresholdC,
+                maxGapMillis = viewModel.maxGapForRange()
+            )
+            Text(
+                if (selectedRange.usesRawSamples) {
+                    "Each point is one stored sample. A break in the line is a period when nothing was measured."
+                } else {
+                    "Each point is the average of one " +
+                        (if (selectedRange.bucketMillis == RetentionPolicy.DAILY_BUCKET_MILLIS) "day" else "hour") +
+                        ". The dashed line is the warning threshold."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            KeyValueRow("Minimum", temperatureValueText(statistics?.minTemperatureC))
+            KeyValueRow("Maximum", temperatureValueText(statistics?.maxTemperatureC))
+            KeyValueRow("Average", temperatureValueText(statistics?.averageTemperatureC))
+            KeyValueRow("Samples counted", (statistics?.sampleCount ?: 0).toString())
+            KeyValueRow(
+                "Time above ${celsius(rules.warningThresholdC)}",
+                when {
+                    statistics == null -> "No data"
+                    above == null -> "Not derivable from averages"
+                    else -> ThermalFormatting.duration(above)
+                }
+            )
         }
-        FeatureCard("Charging markers", "Charging sessions will appear over the thermal timeline", { Icon(Icons.Default.Bolt, null) }) {
-            TimelineRow("14:05–14:43", "Charging session", "Preview peak 40.3°C")
-            TimelineRow("08:12–09:01", "Charging session", "Preview peak 38.6°C")
+
+        FeatureCard(
+            title = "Export",
+            subtitle = "CSV written to the app cache, then shared by you — nothing is uploaded",
+            icon = { Icon(Icons.Default.Download, null) }
+        ) {
+            Button(onClick = viewModel::exportCsv, modifier = Modifier.fillMaxWidth()) {
+                Text("Export CSV")
+            }
+            when (currentOutcome) {
+                null -> Text(
+                    "Only the sample table is exported, because hourly and daily rows are averages. " +
+                        "An empty field in the file means the platform did not report that value.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                is ExportOutcome.Success -> {
+                    NoticeCard(
+                        "Exported ${currentOutcome.result.rowCount} samples covering " +
+                            "${ThermalFormatting.duration(currentOutcome.result.windowMillis)}." +
+                            if (currentOutcome.result.truncatedToRetention) {
+                                " The window was limited to the seven days of raw samples; older history " +
+                                    "exists only as hourly and daily averages."
+                            } else {
+                                ""
+                            }
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                context.startActivity(
+                                    Intent.createChooser(viewModel.shareIntent(currentOutcome.result), null)
+                                )
+                            }
+                        ) {
+                            Text("Share")
+                        }
+                        TextButton(onClick = viewModel::clearExportState) { Text("Dismiss") }
+                    }
+                }
+
+                is ExportOutcome.Failure -> NoticeCard(currentOutcome.message, isError = true)
+
+                is ExportOutcome.Empty -> NoticeCard(currentOutcome.message)
+            }
+        }
+
+        FeatureCard(
+            title = "Charging sessions",
+            subtitle = "Recorded from the platform charging state; peaks are measured, not estimated",
+            icon = { Icon(Icons.Default.Bolt, null) }
+        ) {
+            if (sessions.isEmpty()) {
+                Text(
+                    "No charging session has been recorded in this window yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                sessions.take(5).forEach { session ->
+                    val end = session.endMillis?.let { ThermalFormatting.clock(it) } ?: "now"
+                    TimelineRow(
+                        time = "${ThermalFormatting.clock(session.startMillis)}–$end",
+                        title = if (session.isOpen) "Charging · in progress" else "Charging session",
+                        detail = buildString {
+                            append(ThermalFormatting.duration(session.durationMillis))
+                            session.peakTemperatureC?.let { append(" · peak ${celsius(it)}") }
+                            session.averageTemperatureC?.let { append(" · average ${celsius(it)}") }
+                            append(" · ${session.sampleCount} samples")
+                        }
+                    )
+                }
+            }
         }
     }
 }
@@ -638,31 +1227,61 @@ fun ReportsScreen() {
         }
     }
 }
-
 @Composable
 fun DiagnosticsScreen() {
+    val viewModel: DiagnosticsViewModel = viewModel()
+    val checks by viewModel.checks.collectAsStateWithLifecycle()
+    val running by viewModel.running.collectAsStateWithLifecycle()
+    val monitoringEnabled by viewModel.monitoringEnabled.collectAsStateWithLifecycle()
+
     ScreenContent {
-        ScreenHeader("Diagnostics", "Environment readiness, permissions and subsystem health")
-        FeatureCard("Environment", "UI shell diagnostics are always available", { Icon(Icons.Default.Memory, null) }) {
-            KeyValueRow("Android", "Preview")
-            KeyValueRow("API level", "31+")
-            KeyValueRow("App build", BuildConfig.VERSION_NAME)
-            KeyValueRow("Network protection", "Not connected")
-            KeyValueRow("Thermal engine", "Not connected")
+        ScreenHeader(
+            "Diagnostics",
+            "Runtime readiness reported by the engine, including what it cannot verify"
+        )
+
+        FeatureCard(
+            title = "Environment",
+            subtitle = "Read from this device at runtime",
+            icon = { Icon(Icons.Default.Memory, null) }
+        ) {
+            KeyValueRow("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+            KeyValueRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
+            KeyValueRow("App build", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            KeyValueRow("Monitoring intent", if (monitoringEnabled) "Enabled by the user" else "Not enabled")
+            KeyValueRow("Network protection", "Not implemented in this build")
+            KeyValueRow("Security scanner", "Not implemented in this build")
         }
-        FeatureCard("Readiness checks", "Future runtime checks will replace the static status values", { Icon(Icons.Default.Refresh, null) }) {
-            DiagnosticRow("Compose UI", true)
-            DiagnosticRow("Theme engine", true)
-            DiagnosticRow("Navigation", true)
-            DiagnosticRow("Battery monitor", false)
-            DiagnosticRow("Thermal monitor", false)
-            DiagnosticRow("VPN service", false)
-            DiagnosticRow("DNS proxy", false)
-            DiagnosticRow("Security scanner", false)
+
+        FeatureCard(
+            title = "Readiness checks",
+            subtitle = "\"Cannot be verified\" is a real answer, not a failure state",
+            icon = { Icon(Icons.Default.CheckCircle, null) }
+        ) {
+            if (checks.isEmpty()) {
+                Text(
+                    "No checks have reported yet. They run automatically when this screen opens.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                checks.forEach { check -> ReadinessRow(check) }
+            }
+            Button(
+                onClick = viewModel::runChecks,
+                enabled = !running,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (running) "Running checks…" else "Run diagnostics again")
+            }
         }
-        Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-            Text("Run full diagnostics")
-        }
+
+        NoticeCard(
+            "The monitoring service uses a foreground service with an ongoing notification. Some device " +
+                "manufacturers stop background services anyway; if monitoring stops without you turning it " +
+                "off, the Dashboard says so and offers to resume it.",
+            isError = false
+        )
     }
 }
 
@@ -840,24 +1459,6 @@ private fun RiskRow(label: String, value: String, progress: Float) {
 }
 
 @Composable
-private fun DiagnosticRow(label: String, ready: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Icon(
-            if (ready) Icons.Default.CheckCircle else Icons.Default.Info,
-            contentDescription = null,
-            tint = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Text(
-            if (ready) "Ready" else "Not connected",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
 private fun ReportButton(title: String, subtitle: String) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -871,31 +1472,34 @@ private fun ReportButton(title: String, subtitle: String) {
         }
     }
 }
-
-/**
- * Preview-only screen. The selected style is rememberSaveable so it survives
- * rotation, but it is deliberately not written to DataStore. The widget
- * provider contract is frozen; provider implementations are not part of this
- * build.
- */
 @Composable
 fun WidgetsScreen() {
-    var style by rememberSaveable { mutableStateOf(WidgetStyle.SYSTEM) }
+    val preferencesViewModel: UiPreferencesViewModel = viewModel()
+    val monitoring: MonitoringViewModel = viewModel()
+    val preferences by preferencesViewModel.preferences.collectAsStateWithLifecycle()
+    val sample by monitoring.latestSample.collectAsStateWithLifecycle()
+
+    val style = preferences?.widgetStyle ?: WidgetStyle.SYSTEM
+    val battery = sample?.battery
+    val temperature = battery?.temperatureC
+    val current = sample
+
     ScreenContent {
         ScreenHeader(
             "Widgets",
-            "Home-screen surfaces for thermal, battery and network status"
+            "The home-screen widget is implemented and reads the same local history as the screens"
         )
+
         FeatureCard(
-            "Widget style",
-            "Frozen contract. Three variants are defined; providers are not implemented in this build.",
-            { Icon(Icons.Default.Tune, null) }
+            title = "Widget style",
+            subtitle = "Persisted immediately and applied by the widget provider",
+            icon = { Icon(Icons.Default.Tune, null) }
         ) {
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 WidgetStyle.entries.forEachIndexed { index, candidate ->
                     SegmentedButton(
                         selected = style == candidate,
-                        onClick = { style = candidate },
+                        onClick = { preferencesViewModel.setWidgetStyle(candidate) },
                         shape = SegmentedButtonDefaults.itemShape(
                             index = index,
                             count = WidgetStyle.entries.size
@@ -910,36 +1514,59 @@ fun WidgetsScreen() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Text(
+                "Adding the widget is done from the launcher's widget picker; the app cannot pin it for " +
+                    "you. The provider refreshes when monitoring stores a new sample (at most once a " +
+                    "minute) and every hour as a fallback.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
-        FeatureCard("Thermal widget", "Compact status widget", { Icon(Icons.Default.Thermostat, null) }) {
+
+        FeatureCard(
+            title = "Thermal widget",
+            subtitle = "Preview uses the last stored reading from this device",
+            icon = { Icon(Icons.Default.Thermostat, null) }
+        ) {
             WidgetPreview(
                 title = "Thermal",
-                primary = celsius(thermalLast),
-                secondary = "Normal · sample",
+                primary = temperatureText(temperature),
+                secondary = if (current == null) {
+                    "No measurement yet"
+                } else {
+                    "${labelText(sample?.thermal?.thermalStatus)} · ${ageText(current.timestampMillis)}"
+                },
                 icon = Icons.Default.Thermostat,
                 style = style
             )
-            TextButton(onClick = {}, enabled = false) { Text("Pin widget — future") }
         }
-        FeatureCard("Protection widget", "Network and security state at a glance", { Icon(Icons.Default.Shield, null) }) {
-            WidgetPreview(
-                title = "Protection",
-                primary = "OFF",
-                secondary = "VPN not connected",
-                icon = Icons.Default.Shield,
-                style = style
-            )
-            TextButton(onClick = {}, enabled = false) { Text("Pin widget — future") }
-        }
-        FeatureCard("Battery widget", "Charge level and charging temperature", { Icon(Icons.Default.BatteryFull, null) }) {
+
+        FeatureCard(
+            title = "Battery widget",
+            subtitle = "Charge level and the battery temperature from the same sample",
+            icon = { Icon(Icons.Default.BatteryFull, null) }
+        ) {
             WidgetPreview(
                 title = "Battery",
-                primary = "78%",
-                secondary = "${celsius(thermalLast)} · sample",
+                primary = percentText(battery?.batteryPercent),
+                secondary = if (current == null) "No measurement yet" else temperatureText(temperature),
                 icon = Icons.Default.BatteryFull,
                 style = style
             )
-            TextButton(onClick = {}, enabled = false) { Text("Pin widget — future") }
+        }
+
+        FeatureCard(
+            title = "Protection widget",
+            subtitle = "Shown as off until a network engine exists",
+            icon = { Icon(Icons.Default.Shield, null) }
+        ) {
+            WidgetPreview(
+                title = "Protection",
+                primary = "OFF",
+                secondary = "No VPN engine in this build",
+                icon = Icons.Default.Shield,
+                style = style
+            )
         }
     }
 }
@@ -1036,101 +1663,85 @@ fun AboutScreen() {
         )
     }
 }
-
-// ---------------------------------------------------------------------------
-// Alert Rules — frozen UI contract for the future alert engine.
-//
-// Preview-only. Values use rememberSaveable so they survive rotation, but they
-// are deliberately NOT persisted to DataStore and no notification is scheduled
-// by this build. When the alert engine is implemented, these values will be
-// replaced by repository-backed state without changing the screen signature.
-// ---------------------------------------------------------------------------
-
 @Composable
 fun AlertRulesScreen() {
-    var warningEnabled by rememberSaveable { mutableStateOf(true) }
-    var warningTemp by rememberSaveable { mutableStateOf(40f) }
-    var criticalEnabled by rememberSaveable { mutableStateOf(true) }
-    var criticalTemp by rememberSaveable { mutableStateOf(48f) }
-    var cooldownMinutes by rememberSaveable { mutableStateOf(15) }
-    var chargingEnabled by rememberSaveable { mutableStateOf(false) }
-    var chargingTemp by rememberSaveable { mutableStateOf(45f) }
-    // Set<enum> is not Bundle-saveable; store storage keys instead.
-    var selectedStatusKeys by rememberSaveable {
-        mutableStateOf(
-            listOf(
-                ThermalStatusBand.SEVERE.storageValue,
-                ThermalStatusBand.CRITICAL.storageValue
-            )
-        )
-    }
-    val statusSelection: Set<ThermalStatusBand> =
-        selectedStatusKeys
-            .map(ThermalStatusBand::fromStorage)
-            .filter { it.selectable }
-            .toSet()
+    val viewModel: AlertRulesViewModel = viewModel()
+    val rules by viewModel.rules.collectAsStateWithLifecycle()
+    val violations by viewModel.violations.collectAsStateWithLifecycle()
 
     ScreenContent {
         ScreenHeader(
             "Alert Rules",
-            "Threshold, thermal-status and cooldown configuration for the future alert engine"
+            "Persisted thresholds — the running engine evaluates exactly these values"
         )
-        PreviewBanner()
+
+        if (violations.isNotEmpty()) {
+            NoticeCard(
+                "These settings would not be usable, so the stored values were clamped: " +
+                    violations.joinToString(" "),
+                isError = true
+            )
+        }
 
         FeatureCard(
-            "Warning threshold",
-            "Notifies when the battery temperature crosses this value",
-            { Icon(Icons.Default.Thermostat, null) }
+            title = "Warning threshold",
+            subtitle = "First-level notification when the battery temperature crosses this value",
+            icon = { Icon(Icons.Default.Thermostat, null) }
         ) {
             SettingSwitch(
-                "Enable warning alerts",
-                "First-level notification when the warning threshold is crossed",
-                warningEnabled,
-                onCheckedChange = { warningEnabled = it }
+                title = "Enable warning alerts",
+                subtitle = "Notifies once, then no more often than the cooldown allows",
+                checked = rules.warningEnabled,
+                onCheckedChange = viewModel::setWarningEnabled
             )
             TemperatureEditor(
                 label = "Warning temperature",
-                value = warningTemp,
-                onValueChange = { new ->
-                    // Warning must stay strictly below critical.
-                    warningTemp = new.coerceAtMost(criticalTemp - 1f)
-                },
-                enabled = warningEnabled,
+                value = rules.warningThresholdC,
+                onValueChange = viewModel::setWarningThreshold,
+                enabled = rules.warningEnabled,
                 range = 38f..47f
+            )
+            Text(
+                "Clears when the temperature falls to ${celsius(rules.warningRecoveryC)}, " +
+                    "which is the ${celsius(rules.hysteresisC)} hysteresis band below the threshold.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
         FeatureCard(
-            "Critical threshold",
-            "Escalated notification when the platform reports sustained high thermal load",
-            { Icon(Icons.Default.Thermostat, null) }
+            title = "Critical threshold",
+            subtitle = "Escalates and uses a higher-priority notification channel",
+            icon = { Icon(Icons.Default.Thermostat, null) }
         ) {
             SettingSwitch(
-                "Enable critical alerts",
-                "Higher-priority notification when the critical threshold is reached",
-                criticalEnabled,
-                onCheckedChange = { criticalEnabled = it }
+                title = "Enable critical alerts",
+                subtitle = "Kept at least 1 °C above the warning threshold",
+                checked = rules.criticalEnabled,
+                onCheckedChange = viewModel::setCriticalEnabled
             )
             TemperatureEditor(
                 label = "Critical temperature",
-                value = criticalTemp,
-                onValueChange = { new ->
-                    // Critical must stay strictly above warning.
-                    criticalTemp = new.coerceAtLeast(warningTemp + 1f)
-                },
-                enabled = criticalEnabled,
+                value = rules.criticalThresholdC,
+                onValueChange = viewModel::setCriticalThreshold,
+                enabled = rules.criticalEnabled,
                 range = 44f..55f
+            )
+            Text(
+                "De-escalates to a warning at ${celsius(rules.criticalRecoveryC)}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
         FeatureCard(
-            "Thermal status alerts",
-            "Trigger alerts from platform thermal-status transitions instead of raw temperature",
-            { Icon(Icons.Default.Speed, null) }
+            title = "Thermal status alerts",
+            subtitle = "Trigger from platform thermal-status changes as well as temperature",
+            icon = { Icon(Icons.Default.Speed, null) }
         ) {
             Text(
-                "Select the platform thermal-status bands that should trigger an alert. " +
-                    "The NONE band is not selectable because it represents a normal state.",
+                "Select the platform bands that should raise an alert. NONE is not selectable because it " +
+                    "is the normal state.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1143,24 +1754,17 @@ fun AlertRulesScreen() {
                     .filter { it.selectable }
                     .forEach { band ->
                         FilterChip(
-                            selected = band in statusSelection,
-                            onClick = {
-                                selectedStatusKeys = if (band.storageValue in selectedStatusKeys) {
-                                    selectedStatusKeys - band.storageValue
-                                } else {
-                                    selectedStatusKeys + band.storageValue
-                                }
-                            },
+                            selected = band in rules.statusBandTriggers,
+                            onClick = { viewModel.toggleStatusBand(band) },
                             label = { Text(band.label) }
                         )
                     }
             }
             Text(
-                if (statusSelection.isEmpty()) {
-                    "No bands selected. No thermal-status alert will fire."
+                if (rules.statusBandTriggers.isEmpty()) {
+                    "No bands selected. Thermal-status alerts will not fire; temperature alerts still will."
                 } else {
-                    "Platform level ${statusSelection.minOf { it.androidLevel }} and above " +
-                        "will fire the alert once the engine is implemented."
+                    "Platform level ${rules.lowestTriggeredStatusLevel ?: 0} and above will raise an alert."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1168,60 +1772,72 @@ fun AlertRulesScreen() {
         }
 
         FeatureCard(
-            "Hysteresis / cooldown",
-            "Prevents repeated notifications while the device stays above a threshold",
-            { Icon(Icons.Default.Timer, null) }
+            title = "Hysteresis and cooldown",
+            subtitle = "Hysteresis decides when the state clears; the cooldown only limits repeats",
+            icon = { Icon(Icons.Default.Timer, null) }
         ) {
+            TemperatureEditor(
+                label = "Hysteresis band",
+                value = rules.hysteresisC,
+                onValueChange = viewModel::setHysteresis,
+                enabled = true,
+                range = 0f..3f
+            )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Cooldown period", style = MaterialTheme.typography.bodyMedium)
-                Text("$cooldownMinutes min", style = MaterialTheme.typography.titleMedium)
+                Text("Repeat cooldown", style = MaterialTheme.typography.bodyMedium)
+                Text("${rules.cooldownMinutes} min", style = MaterialTheme.typography.titleMedium)
             }
             Slider(
-                value = cooldownMinutes.toFloat(),
-                onValueChange = { cooldownMinutes = it.roundToInt() },
+                value = rules.cooldownMinutes.toFloat(),
+                onValueChange = { viewModel.setCooldownMinutes(it.roundToInt()) },
                 valueRange = 5f..60f,
                 steps = 10
             )
             Text(
-                "The engine will suppress repeat alerts until the cooldown expires or the temperature " +
-                    "drops below the threshold by the configured hysteresis band.",
+                "While the state stays escalated, a repeat notification is allowed only after the cooldown. " +
+                    "A new escalation always notifies immediately, and the \"back in range\" note is never " +
+                    "suppressed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
         FeatureCard(
-            "Charging-specific rule",
-            "Separate threshold that only applies while the device is charging",
-            { Icon(Icons.Default.Bolt, null) }
+            title = "Charging-specific rule",
+            subtitle = "A separate threshold that only applies while on external power",
+            icon = { Icon(Icons.Default.Bolt, null) }
         ) {
             SettingSwitch(
-                "Enable charging-specific threshold",
-                "Use a distinct threshold while a charging session is active",
-                chargingEnabled,
-                onCheckedChange = { chargingEnabled = it }
+                title = "Enable charging-specific threshold",
+                subtitle = "Useful because charging adds heat that has nothing to do with load",
+                checked = rules.chargingWarningEnabled,
+                onCheckedChange = viewModel::setChargingWarningEnabled
             )
             TemperatureEditor(
                 label = "Charging warning temperature",
-                value = chargingTemp,
-                onValueChange = { chargingTemp = it },
-                enabled = chargingEnabled,
+                value = rules.chargingWarningThresholdC,
+                onValueChange = viewModel::setChargingWarningThreshold,
+                enabled = rules.chargingWarningEnabled,
                 range = 38f..50f
             )
         }
 
         FeatureCard(
-            "Engine boundaries",
-            "What the alert engine will not do",
-            { Icon(Icons.Default.Info, null) }
+            title = "Engine boundaries",
+            subtitle = "What the alert engine does not do",
+            icon = { Icon(Icons.Default.Info, null) }
         ) {
             Text(
-                "Alert rules act only on signals Android exposes through BatteryManager and PowerManager. " +
-                    "The engine will not override the platform thermal engine, will not force-stop apps, " +
-                    "and will not change display brightness as part of ordinary monitoring.",
+                "Alerts act only on signals Android exposes through BatteryManager and PowerManager. " +
+                    "The engine does not override the platform thermal engine, does not force-stop apps, " +
+                    "does not change display brightness and does not upload anything. Notifications are " +
+                    "posted locally even when the notification permission is denied — Android simply hides them.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            TextButton(onClick = viewModel::resetToDefaults, modifier = Modifier.fillMaxWidth()) {
+                Text("Reset to defaults (${celsius(40f)} / ${celsius(48f)}, 15 min)")
+            }
         }
     }
 }

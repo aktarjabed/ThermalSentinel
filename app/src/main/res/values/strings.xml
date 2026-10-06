@@ -44,4 +44,39 @@
     <string name="dest_about">About</string>
 
     <string name="dest_unknown">Thermal Sentinel</string>
+
+    <!-- Monitoring notification (ongoing, silent) -->
+    <string name="notification_channel_monitoring_name">Monitoring</string>
+    <string name="notification_channel_monitoring_description">Ongoing notification shown while thermal and battery monitoring is active.</string>
+    <string name="notification_channel_alerts_name">Thermal alerts</string>
+    <string name="notification_channel_alerts_description">Warning and critical battery-temperature and thermal-status alerts.</string>
+    <string name="notification_monitoring_title">Thermal monitoring active</string>
+    <!-- %1$s temperature, %2$s thermal status -->
+    <string name="notification_monitoring_text">%1$s · %2$s</string>
+    <string name="notification_monitoring_text_waiting">Waiting for the first battery reading</string>
+    <string name="notification_monitoring_permission_hidden">Notification permission is denied, so Android hides this notification. Monitoring continues and the platform still lists the service under active apps.</string>
+
+    <!-- Thermal alerts -->
+    <string name="alert_warning_title">Battery temperature warning</string>
+    <!-- %1$s temperature, %2$s threshold -->
+    <string name="alert_warning_text">%1$s has reached the warning threshold of %2$s.</string>
+    <string name="alert_critical_title">Battery temperature critical</string>
+    <string name="alert_critical_text">%1$s has reached the critical threshold of %2$s. Reduce load or unplug the charger.</string>
+    <string name="alert_status_title">Android thermal status changed</string>
+    <!-- %1$s band label -->
+    <string name="alert_status_text">The platform reports thermal status %1$s.</string>
+    <string name="alert_cleared_title">Temperature back within range</string>
+    <!-- %1$s temperature -->
+    <string name="alert_cleared_text">%1$s is below the recovery threshold. Alerts are re-armed.</string>
+
+    <!-- Widget -->
+    <string name="widget_description">Battery temperature, Android thermal status and battery level, updated by the monitoring engine.</string>
+    <string name="widget_label">Thermal Sentinel</string>
+    <string name="widget_state_no_data">No measurement yet — open the app and start monitoring.</string>
+    <string name="widget_state_monitoring_off">Monitoring is off — showing the last stored reading.</string>
+    <string name="widget_temperature_unavailable">Temperature unavailable</string>
+
+    <!-- Export -->
+    <string name="export_share_title">Share thermal history</string>
+    <string name="export_csv_subject">Thermal Sentinel CSV export</string>
 </resources>
