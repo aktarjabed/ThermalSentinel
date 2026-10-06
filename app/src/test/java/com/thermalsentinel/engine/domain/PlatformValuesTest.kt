@@ -41,7 +41,9 @@ class PlatformValuesTest {
     @Test
     fun aPlausibleTemperatureIsPresent() {
         assertEquals(38.5f, PlatformValues.temperatureReading(385).valueOrNull!!, 0.001f)
-        assertEquals(38.5f, PlatformValues.temperatureReading(-300).valueOrNull!!, 0.001f)
+        // -30.0 °C is the coldest value the plausibility window accepts, and it is
+        // reported as a measurement rather than as an absence.
+        assertEquals(-30f, PlatformValues.temperatureReading(-300).valueOrNull!!, 0.001f)
     }
 
     @Test

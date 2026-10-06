@@ -69,8 +69,12 @@ class ThermalAlertRulesTest {
 
         assertTrue(hostile.validate().isEmpty())
         assertEquals(60f, hostile.warningThresholdC, 0.001f)
-        assertEquals(70f, hostile.criticalThresholdC, 0.001f)
+        // Clamping raises the critical threshold to warning + 1 rather than to the
+        // top of its own range, so the pair stays as close as the rules allow.
+        assertEquals(61f, hostile.criticalThresholdC, 0.001f)
+        assertEquals(1f, hostile.hysteresisC, 0.001f)
         assertEquals(5, hostile.cooldownMinutes)
+        assertEquals(30f, hostile.chargingWarningThresholdC, 0.001f)
         assertTrue(hostile.statusBandTriggers.isEmpty())
     }
 

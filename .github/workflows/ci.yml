@@ -45,6 +45,8 @@ jobs:
             # Compiler errors first: they are the actionable part, and GitHub caps
             # how much of an annotation it will show.
             grep -E '^e: ' build.log | head -120
+            # Lint findings do not start with "e:", so they need their own pass.
+            grep -E 'Error: |[0-9]+ errors?, [0-9]+ warnings?|Lint found' build.log | head -30
             grep -E 'FAILED|What went wrong|Execution failed|> Task .* FAILED' build.log | head -15
           } > errors.txt || true
           msg=$(sed -e 's/%/%25/g' -e 's/\r//g' errors.txt | awk '{printf "%s%%0A", $0}')

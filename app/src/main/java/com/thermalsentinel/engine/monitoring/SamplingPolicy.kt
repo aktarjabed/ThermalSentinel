@@ -71,7 +71,11 @@ object SamplingPolicy {
 
         val statusLevel = context.thermalStatus?.takeIf { it.isPlatformReported }?.androidLevel
 
-        if (statusLevel != null && statusLevel >= ThermalStatusBand.CRITICAL.androidLevel) {
+        // SEVERE means the platform itself has started throttling, which is the
+        // point at which five-second sampling stops being over-sampling. The
+        // threshold is not CRITICAL: waiting until CRITICAL would miss the
+        // throttling ramp that the history is most useful for.
+        if (statusLevel != null && statusLevel >= ThermalStatusBand.SEVERE.androidLevel) {
             return SamplingDecision(
                 EVENT_INTERVAL_MS,
                 SampleReason.SCHEDULED_EVENT,
