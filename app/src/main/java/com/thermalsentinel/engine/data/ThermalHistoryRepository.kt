@@ -201,6 +201,17 @@ class ThermalHistoryRepository(
         HistoryMath.seriesPoints(sampleDao.since(fromMillis).map(SampleMappers::toSeriesPoint))
 
     /**
+     * Full samples for a window, used by the CSV export.
+     *
+     * Only the sample table is served here: hourly and daily rows are averages,
+     * and exporting an average as though it were a measurement would make the
+     * file misleading. Absent values come back as `Absent(NOT_RECORDED)` so the
+     * exporter writes an empty field rather than a zero.
+     */
+    suspend fun samplesSince(fromMillis: Long): List<DeviceSample> =
+        sampleDao.since(fromMillis).map(SampleMappers::toDomain)
+
+    /**
      * Series served from compacted buckets (hourly or daily) for ranges beyond
      * raw retention. Values are bucket averages, which is exactly why the chart
      * labels them as averages.

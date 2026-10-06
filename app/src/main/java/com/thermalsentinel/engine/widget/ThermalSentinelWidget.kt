@@ -13,6 +13,9 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
+// The day/night factory lives in androidx.glance.color; androidx.glance.unit only
+// declares the ColorProvider interface that TextStyle accepts.
+import androidx.glance.color.ColorProvider
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
 import androidx.glance.layout.fillMaxSize
@@ -20,12 +23,10 @@ import androidx.glance.layout.padding
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
 import com.thermalsentinel.R
 import com.thermalsentinel.ThermalSentinelApp
 import com.thermalsentinel.engine.domain.DeviceSample
 import com.thermalsentinel.engine.domain.ThermalFormatting
-import com.thermalsentinel.engine.domain.valueOrNull
 import com.thermalsentinel.engine.service.MonitoringStatus
 import com.thermalsentinel.ui.MainActivity
 import com.thermalsentinel.ui.data.UiPreferencesRepository
@@ -78,7 +79,7 @@ private fun WidgetContent(
     monitoringOff: String
 ) {
     val background = when (style) {
-        WidgetStyle.TRANSPARENT -> ColorProvider(Color.Transparent)
+        WidgetStyle.TRANSPARENT -> ColorProvider(day = Color.Transparent, night = Color.Transparent)
         WidgetStyle.THEMED -> ColorProvider(day = Color(0xFFE8F0FE), night = Color(0xFF1F2A44))
         WidgetStyle.SYSTEM -> ColorProvider(day = Color(0xFFFFFFFF), night = Color(0xFF121212))
     }

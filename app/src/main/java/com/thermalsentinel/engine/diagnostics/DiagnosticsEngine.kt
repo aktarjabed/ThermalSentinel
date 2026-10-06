@@ -15,6 +15,7 @@ import com.thermalsentinel.engine.monitoring.HistoryMath
 import com.thermalsentinel.engine.monitoring.RetentionPolicy
 import com.thermalsentinel.engine.monitoring.SamplingPolicy
 import com.thermalsentinel.engine.service.MonitoringStatus
+import kotlinx.coroutines.flow.first
 
 enum class CheckState(val label: String) {
     OK("Ready"),
