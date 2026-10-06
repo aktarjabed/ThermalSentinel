@@ -45,6 +45,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.thermalsentinel.BuildConfig
 import com.thermalsentinel.ui.data.AccentPreset
 import com.thermalsentinel.ui.data.ThemeMode
 import com.thermalsentinel.ui.data.UiPreferences

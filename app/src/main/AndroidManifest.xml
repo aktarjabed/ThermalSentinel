@@ -1,6 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Permission policy for the engine phase (minimum privilege, each capability
+      independently disableable):
+
+      POST_NOTIFICATIONS (API 33+) — required for the ongoing monitoring
+      notification and for thermal alerts to be visible. Monitoring still runs
+      when it is denied; the platform hides the notification and the app says so
+      explicitly instead of implying that the notification is showing.
+
+      FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE — the monitoring service
+      is a continuous, user-initiated sensor read loop. It is not a data sync
+      (Android 15 caps dataSync at six hours per 24 h), so specialUse is the
+      honest type. It is declared with the required subtype property below.
+
+      Not requested in this phase: location, camera, microphone, contacts,
+      PACKAGE_USAGE_STATS, QUERY_ALL_PACKAGES, BIND_VPN_SERVICE, exact alarms.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
+        android:name="com.thermalsentinel.ThermalSentinelApp"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
@@ -8,8 +31,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ThermalSentinel.Starting"
         android:resizeableActivity="true">
+
         <activity
-            android:name=".MainActivity"
+            android:name="com.thermalsentinel.ui.MainActivity"
             android:exported="true"
             android:theme="@style/Theme.ThermalSentinel.Starting">
             <intent-filter>
@@ -17,5 +41,51 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Continuous monitoring. User-started only: the app never starts this
+          service from the background, and it is never started at boot. After a
+          reboot the user resumes monitoring from the app (a foreground start,
+          which is always permitted) rather than through a BOOT_COMPLETED
+          receiver, which Android 15 increasingly restricts for background
+          foreground-service starts.
+        -->
+        <service
+            android:name="com.thermalsentinel.engine.service.ThermalMonitorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Continuous local thermal and battery monitoring requested by the user; samples battery temperature, Android thermal status and thermal headroom and stores them on-device only." />
+        </service>
+
+        <!--
+          Home-screen widget. APPWIDGET_UPDATE is a protected broadcast, so the
+          exported receiver can only be reached by the system/launcher.
+        -->
+        <receiver
+            android:name="com.thermalsentinel.engine.widget.ThermalWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/thermal_widget_info" />
+        </receiver>
+
+        <!--
+          CSV export sharing. Local cache only; the authority is per-variant
+          because it is derived from applicationId.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.engine.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/engine_file_paths" />
+        </provider>
     </application>
 </manifest>

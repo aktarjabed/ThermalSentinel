@@ -1,5 +1,8 @@
 package com.thermalsentinel.ui.data
 
+// The band enum moved into the engine package when the engine phase started; the
+// duplicate UI copy is gone, so the contract test now covers the engine enum.
+import com.thermalsentinel.engine.domain.ThermalStatusBand
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
