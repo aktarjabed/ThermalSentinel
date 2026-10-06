@@ -1,6 +1,8 @@
 # Thermal Sentinel — Core Engine Specification
 
-Status: **implemented (v0.2.0-engine), build-unverified in this environment.**
+Status: **implemented (v0.2.0-engine) and verified in CI** — `testDebugUnitTest`,
+`assembleDebug`, `assembleRelease` (R8 + resource shrinking) and `lintDebug`
+(`abortOnError = true`) all pass. Instrumented tests are written but not run in CI.
 Scope: the V1 monitoring engine only — battery temperature, platform thermal status and
 headroom, charge state, history, alerts, the foreground service, diagnostics, CSV export
 and the home-screen widget.

@@ -8,11 +8,12 @@ Compose UI: a foreground service that samples the battery and thermal APIs, a lo
 history database with a retention ladder, a hysteresis-aware alert engine, a
 diagnostics surface, CSV export and a real home-screen widget.
 
-> **Build status: unverified.** The implementation was written without a JDK or
-> Android SDK available in the authoring environment. `./gradlew
-> testDebugUnitTest assembleDebug assembleRelease lintDebug` in
-> [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the verification path,
-> and nothing here should be treated as compiling until that job is green.
+> **Build status: verified in CI.** `./gradlew testDebugUnitTest assembleDebug
+> assembleRelease lintDebug` passes in
+> [`.github/workflows/ci.yml`](.github/workflows/ci.yml): 88 JVM unit tests, the
+> debug build, the minified release build and lint (`abortOnError = true`).
+> Instrumented tests are written but not yet part of CI, because they need a
+> device or emulator.
 
 | | |
 |---|---|
@@ -154,8 +155,8 @@ older Gradle would otherwise try to apply AGP) and copy the files over.
 
 ## Known follow-ups
 
-- **Verify the build in CI.** Nothing in the engine phase has been compiled yet.
-- Write the planned instrumentation tests for the service lifecycle and Room.
+- Add the planned instrumentation tests for the service lifecycle and Room to CI
+  (they need a device or emulator, so they run locally today).
 - Add a Room migration test before the schema version is ever bumped.
 - Split `Screens.kt` per screen (optional; it is deliberately one file for now).
 - Confirm the `androidx.core:core-splashscreen` pin (1.0.1) before release.
