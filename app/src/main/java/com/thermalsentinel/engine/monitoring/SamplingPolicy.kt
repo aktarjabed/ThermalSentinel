@@ -29,10 +29,10 @@ data class SamplingDecision(
  *
  * The intervals below are a *starting calibration*, not a measured optimum. The
  * spec records the benchmark procedure that must confirm them on real hardware
- * (thermal-engine cost, wakeups per hour, and history fidelity). The floor of 5
- * seconds exists because Android's own thermal APIs are not meant to be polled
- * much faster than about once per second; polling harder returns `NaN` for
- * headroom and burns power for no extra information.
+ * (thermal-engine cost, wakeups per hour, and history fidelity). The 5-second
+ * floor is for battery/status sampling in critical conditions. Thermal headroom
+ * has a separate process-wide limiter in [ThermalHeadroomReadLimiter] and is
+ * never polled more often than once every 10 seconds.
  */
 object SamplingPolicy {
 
@@ -83,11 +83,16 @@ object SamplingPolicy {
             )
         }
 
-        if (context.alertLevel == AlertLevel.WARNING) {
+        if (context.alertLevel == AlertLevel.WARNING || context.alertLevel == AlertLevel.RECOVERY) {
+            val explanation = if (context.alertLevel == AlertLevel.RECOVERY) {
+                "Alert state is recovering, so sampling remains accelerated until the recovery threshold is confirmed."
+            } else {
+                "Alert state is warning, so sampling is accelerated."
+            }
             return SamplingDecision(
                 ELEVATED_INTERVAL_MS,
                 SampleReason.SCHEDULED_EVENT,
-                "Alert state is warning, so sampling is accelerated."
+                explanation
             )
         }
 

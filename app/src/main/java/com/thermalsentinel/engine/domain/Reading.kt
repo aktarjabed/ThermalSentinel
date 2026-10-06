@@ -5,8 +5,8 @@ package com.thermalsentinel.engine.domain
  *
  * The whole point of this type is to make "the device did not tell us" a
  * first-class, displayable outcome instead of a silent `0`, `null` or `-1`.
- * A `0 mA` current reading and an unavailable current sensor are different
- * facts, and this engine never renders the second one as the first.
+ * A real `0 mA` or `0 °C` reading and an unavailable sensor are different facts;
+ * only documented sentinels are mapped to absence.
  *
  * Pure Kotlin by design: the domain layer never imports `android.*`, so every
  * mapping decision below is unit-testable on the JVM.
@@ -26,9 +26,9 @@ enum class AbsenceReason(val storageValue: String) {
     UNSUPPORTED_ON_THIS_DEVICE("unsupported"),
 
     /**
-     * A value was reported, but it cannot be physically true for a running
-     * device (for example `0 mA` while discharging). Showing it would be worse
-     * than showing "unavailable", so it is surfaced as absent instead.
+     * A value was reported outside the physically plausible range for that
+     * signal. Zero itself is retained wherever the platform can legitimately
+     * report it.
      */
     REPORTED_VALUE_IMPLAUSIBLE("implausible"),
 

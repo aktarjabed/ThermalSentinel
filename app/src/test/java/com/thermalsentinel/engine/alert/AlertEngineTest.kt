@@ -54,6 +54,53 @@ class AlertEngineTest {
     }
 
     @Test
+    fun criticalDropBelowBothRecoveryThresholdsEntersRecoveryBeforeNormal() {
+        val critical = AlertEngine.evaluate(AlertState(), rules, input(temperatureC = 50f), t0)
+        assertEquals(AlertLevel.CRITICAL, critical.state.level)
+
+        val recovering = AlertEngine.evaluate(
+            critical.state,
+            rules,
+            input(temperatureC = 35f),
+            t0 + minute
+        )
+        assertEquals(AlertLevel.RECOVERY, recovering.state.level)
+        assertTrue(recovering.actions.isEmpty())
+
+        val cleared = AlertEngine.evaluate(
+            recovering.state,
+            rules,
+            input(temperatureC = 35f),
+            t0 + 2 * minute
+        )
+        assertEquals(AlertLevel.NORMAL, cleared.state.level)
+        assertEquals(1, cleared.actions.filterIsInstance<AlertAction.Cleared>().size)
+    }
+
+    @Test
+    fun warningThresholdReenteredDuringRecoveryEscalatesImmediately() {
+        val recovering = AlertState(
+            level = AlertLevel.RECOVERY,
+            trigger = AlertTrigger.BATTERY_TEMPERATURE,
+            sinceMillis = t0,
+            lastNotifiedLevel = AlertLevel.NORMAL,
+            lastNotifiedAtMillis = t0
+        )
+
+        val evaluation = AlertEngine.evaluate(
+            recovering,
+            rules,
+            input(temperatureC = 41f),
+            t0 + minute
+        )
+
+        assertEquals(AlertLevel.WARNING, evaluation.state.level)
+        val notify = evaluation.actions.filterIsInstance<AlertAction.Notify>().single()
+        assertEquals(AlertLevel.WARNING, notify.level)
+        assertFalse(notify.isReminder)
+    }
+
+    @Test
     fun hysteresisHoldsTheWarningUntilTheRecoveryLevel() {
         val previous = AlertState(
             level = AlertLevel.WARNING,
@@ -73,7 +120,7 @@ class AlertEngineTest {
     }
 
     @Test
-    fun clearingIsAlwaysAnnounced() {
+    fun clearingIsAlwaysAnnouncedAfterTheRecoveryPhase() {
         val previous = AlertState(
             level = AlertLevel.WARNING,
             trigger = AlertTrigger.BATTERY_TEMPERATURE,
@@ -82,12 +129,20 @@ class AlertEngineTest {
             lastNotifiedAtMillis = t0
         )
 
-        val evaluation = AlertEngine.evaluate(previous, rules, input(temperatureC = 38f), t0 + 5 * minute)
+        val recovering = AlertEngine.evaluate(previous, rules, input(temperatureC = 38f), t0 + 5 * minute)
+        assertEquals(AlertLevel.RECOVERY, recovering.state.level)
+        assertTrue(recovering.actions.isEmpty())
 
+        val evaluation = AlertEngine.evaluate(
+            recovering.state,
+            rules,
+            input(temperatureC = 38f),
+            t0 + 6 * minute
+        )
         assertEquals(AlertLevel.NORMAL, evaluation.state.level)
         assertEquals(AlertLevel.NORMAL, evaluation.state.lastNotifiedLevel)
         val cleared = evaluation.actions.filterIsInstance<AlertAction.Cleared>().single()
-        assertEquals(AlertLevel.WARNING, cleared.previousLevel)
+        assertEquals(AlertLevel.RECOVERY, cleared.previousLevel)
     }
 
     @Test
@@ -228,6 +283,12 @@ class AlertEngineTest {
     }
 
     @Test
+    fun recoveryLevelStorageValueRoundTripsAndUnknownStillFallsBack() {
+        assertEquals(AlertLevel.RECOVERY, AlertLevel.fromStorage(AlertLevel.RECOVERY.storageValue))
+        assertEquals(AlertLevel.NORMAL, AlertLevel.fromStorage("future_level"))
+    }
+
+    @Test
     fun sinceTimestampTracksTheCurrentLevel() {
         val escalation = AlertEngine.evaluate(AlertState(), rules, input(temperatureC = 40.5f), t0)
         assertEquals(t0, escalation.state.sinceMillis)
@@ -235,7 +296,12 @@ class AlertEngineTest {
         val held = AlertEngine.evaluate(escalation.state, rules, input(temperatureC = 41f), t0 + 5 * minute)
         assertEquals(t0, held.state.sinceMillis)
 
-        val cleared = AlertEngine.evaluate(held.state, rules, input(temperatureC = 30f), t0 + 10 * minute)
-        assertEquals(t0 + 10 * minute, cleared.state.sinceMillis)
+        val recovering = AlertEngine.evaluate(held.state, rules, input(temperatureC = 30f), t0 + 10 * minute)
+        assertEquals(AlertLevel.RECOVERY, recovering.state.level)
+        assertEquals(t0 + 10 * minute, recovering.state.sinceMillis)
+
+        val cleared = AlertEngine.evaluate(recovering.state, rules, input(temperatureC = 30f), t0 + 11 * minute)
+        assertEquals(AlertLevel.NORMAL, cleared.state.level)
+        assertEquals(t0 + 11 * minute, cleared.state.sinceMillis)
     }
 }

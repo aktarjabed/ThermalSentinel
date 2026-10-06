@@ -97,7 +97,7 @@ class MonitoringCoordinator(
     ): DeviceSample {
         val nowMillis = System.currentTimeMillis()
         val battery = batteryCollector.snapshot(nowMillis)
-        val thermal = thermalCollector.snapshot(nowMillis)
+        val thermal = thermalCollector.snapshot()
         val sample = SampleAssembler.assemble(
             request = SampleRequest(
                 nowMillis = nowMillis,

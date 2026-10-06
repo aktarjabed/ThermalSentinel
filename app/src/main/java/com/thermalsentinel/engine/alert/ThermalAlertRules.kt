@@ -25,10 +25,12 @@ enum class RuleViolation(val message: String) {
  * Two independent ideas are deliberately kept apart, because conflating them is
  * what produces notification spam:
  *
- *  - **Hysteresis** ([hysteresisC]) decides when the *state* comes back down.
- *    With a 40 °C warning threshold and a 1 °C band, the warning clears at 39 °C.
+ *  - **Hysteresis** ([hysteresisC]) provides separate derived recovery points
+ *    for warning and critical thresholds. With a 40 °C warning threshold and a
+ *    1 °C band, the engine enters RECOVERY at 39 °C and only returns to NORMAL
+ *    after a confirming reading remains at or below that point.
  *  - **Cooldown** ([cooldownMinutes]) decides how often a *notification* may
- *    repeat while the state stays escalated.
+ *    repeat while an alert remains escalated.
  *
  * A cooldown alone is not hysteresis: without recovery thresholds a device
  * sitting at 40.1 °C would re-alert every cooldown forever.
@@ -47,10 +49,10 @@ data class ThermalAlertRules(
         ThermalStatusBand.CRITICAL
     )
 ) {
-    /** Temperature at or below which a warning clears. */
+    /** Temperature at or below which a warning enters the RECOVERY phase. */
     val warningRecoveryC: Float get() = warningThresholdC - hysteresisC
 
-    /** Temperature at or below which a critical alert de-escalates to warning. */
+    /** Temperature at or below which a critical alert may de-escalate. */
     val criticalRecoveryC: Float get() = criticalThresholdC - hysteresisC
 
     /** The warning threshold that applies right now, honouring the charging rule. */

@@ -12,7 +12,6 @@ import com.thermalsentinel.engine.AppGraph
 import com.thermalsentinel.engine.alert.AlertLevel
 import com.thermalsentinel.engine.alert.AlertNotificationPublisher
 import com.thermalsentinel.engine.collector.BatteryCollector
-import com.thermalsentinel.engine.collector.ThermalCollector
 import com.thermalsentinel.engine.data.MonitoringStopReason
 import com.thermalsentinel.engine.domain.ThermalEventType
 import com.thermalsentinel.engine.widget.WidgetUpdater
@@ -27,10 +26,12 @@ import kotlinx.coroutines.launch
  *
  * Three platform contracts shape this file:
  *
- *  - **Type `specialUse`** (declared in the manifest with a subtype property). It
- *    is deliberately *not* `dataSync`: that type is capped at six hours per 24 h
- *    on Android 15 and cannot be started from `BOOT_COMPLETED`, which would break
- *    continuous monitoring and would describe the service dishonestly.
+ *  - **Type `specialUse`** (declared in the manifest with its required subtype
+ *    property). This is user-requested local battery/thermal sensor monitoring,
+ *    not data transfer/import/export (`dataSync`) or a health/fitness sensor
+ *    session. Android 15+ caps `dataSync` at six hours per 24 h for apps targeting
+ *    API 35+, so it cannot represent the continuous monitoring contract. Play
+ *    review still requires a use-case justification for `specialUse`.
  *  - **Foreground within five seconds.** [startAsForeground] runs before any
  *    suspending work, using whatever sample is already cached.
  *  - **`START_NOT_STICKY`.** A sticky restart can be rejected on API 31+ and
@@ -136,7 +137,7 @@ class ThermalMonitorService : Service() {
             settings = graph.settings,
             history = graph.history,
             batteryCollector = BatteryCollector(applicationContext),
-            thermalCollector = ThermalCollector(applicationContext),
+            thermalCollector = graph.thermalCollector,
             publisher = graph.notifications,
             interactiveProvider = interactiveProvider,
             onSampleStored = { WidgetUpdater.onSampleStored(applicationContext) },

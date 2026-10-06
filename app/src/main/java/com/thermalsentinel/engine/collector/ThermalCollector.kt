@@ -2,12 +2,14 @@ package com.thermalsentinel.engine.collector
 
 import android.content.Context
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.thermalsentinel.engine.domain.AbsenceReason
 import com.thermalsentinel.engine.domain.PlatformValues
 import com.thermalsentinel.engine.domain.Reading
 import com.thermalsentinel.engine.domain.ThermalSnapshot
 import com.thermalsentinel.engine.domain.ThermalStatusBand
+import com.thermalsentinel.engine.monitoring.ThermalHeadroomReadLimiter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,12 +18,11 @@ import kotlinx.coroutines.flow.asStateFlow
  * Platform thermal state: `PowerManager.getCurrentThermalStatus()` with a status
  * listener, plus `getThermalHeadroom(forecastSeconds)`.
  *
- * Why headroom is read at most once per second:
- * the platform documents that calling it much more often than about once per
- * second "may result in the function returning NaN" — and NaN is also the
- * documented "not supported" answer. Caching for a second keeps those two cases
- * distinguishable instead of turning a self-inflicted NaN into a false claim
- * that the device lacks the API.
+ * Headroom is read no more often than once every ten seconds, in line with the
+ * Android thermal API guidance. The collector is process-scoped and shared with
+ * Diagnostics, and the read itself is synchronized, so neither sampling nor a
+ * diagnostics refresh can bypass the platform limit by polling on another thread.
+ * NaN remains an unavailable reading; it is never converted to zero.
  *
  * Headroom is a dimensionless ratio (1.0 = the SEVERE threshold, values above
  * 1.0 are possible). It is never labelled a temperature.
@@ -40,8 +41,10 @@ class ThermalCollector(private val context: Context) {
     }
 
     private var registered = false
-    private var lastHeadroomReadAtMillis = 0L
+    private val headroomReadLimiter = ThermalHeadroomReadLimiter(HEADROOM_MIN_INTERVAL_MILLIS)
     private var lastHeadroomReading: Reading<Float> = Reading.Absent(AbsenceReason.NOT_COLLECTED_YET)
+
+    val isPowerManagerAvailable: Boolean get() = powerManager != null
 
     fun start() {
         val manager = powerManager ?: run {
@@ -64,39 +67,36 @@ class ThermalCollector(private val context: Context) {
     }
 
     /**
-     * Current headroom, cached for [HEADROOM_CACHE_MILLIS]. `forecastSeconds` of
-     * 10 is the recommendation from the platform's own performance guidance: it
-     * is a forecast of how close the device is to throttling, not an instant
-     * reading that would flap on every sample.
+     * Most recent headroom reading, refreshed only when the shared 10-second
+     * throttle allows it. Elapsed realtime is used rather than wall-clock time:
+     * changing the device clock must not accidentally increase the platform poll
+     * rate.
      */
-    fun headroom(nowMillis: Long = System.currentTimeMillis()): Reading<Float> {
+    @Synchronized
+    fun headroom(): Reading<Float> {
         val manager = powerManager
         if (manager == null) {
             lastHeadroomReading = Reading.Absent(AbsenceReason.UNSUPPORTED_ON_THIS_DEVICE)
             return lastHeadroomReading
         }
-        if (nowMillis - lastHeadroomReadAtMillis < HEADROOM_CACHE_MILLIS) return lastHeadroomReading
+        if (!headroomReadLimiter.tryAcquire(SystemClock.elapsedRealtime())) return lastHeadroomReading
 
         val raw = runCatching { manager.getThermalHeadroom(FORECAST_SECONDS) }.getOrNull()
-        lastHeadroomReadAtMillis = nowMillis
         lastHeadroomReading = PlatformValues.headroomReading(raw)
         return lastHeadroomReading
     }
 
-    fun snapshot(nowMillis: Long = System.currentTimeMillis()): ThermalSnapshot = ThermalSnapshot(
+    fun snapshot(): ThermalSnapshot = ThermalSnapshot(
         thermalStatus = _thermalStatus.value,
-        headroom = headroom(nowMillis)
+        headroom = headroom()
     )
 
     companion object {
-        /**
-         * One second is the platform's own stated floor for meaningful calls.
-         * The sampling policy's minimum interval is five seconds, so in practice
-         * one read happens per sample.
-         */
-        const val HEADROOM_CACHE_MILLIS = 1_000L
+        /** Android's recommended minimum interval between headroom API calls. */
+        const val HEADROOM_MIN_INTERVAL_MILLIS =
+            ThermalHeadroomReadLimiter.DEFAULT_MINIMUM_INTERVAL_MILLIS
 
-        /** Forecast horizon recommended by the platform performance guidance. */
+        /** Forecast horizon used for each API read. */
         const val FORECAST_SECONDS = 10
 
         /**

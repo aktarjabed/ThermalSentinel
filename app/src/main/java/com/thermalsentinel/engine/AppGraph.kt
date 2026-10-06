@@ -2,6 +2,7 @@ package com.thermalsentinel.engine
 
 import android.content.Context
 import com.thermalsentinel.engine.alert.AlertNotificationPublisher
+import com.thermalsentinel.engine.collector.ThermalCollector
 import com.thermalsentinel.engine.data.EngineDatabase
 import com.thermalsentinel.engine.data.EngineSettingsRepository
 import com.thermalsentinel.engine.data.ThermalHistoryRepository
@@ -40,12 +41,15 @@ class AppGraph(context: Context) {
 
     val notifications: AlertNotificationPublisher by lazy { AlertNotificationPublisher(appContext) }
 
+    /** One process-scoped collector so service and diagnostics share API throttling. */
+    val thermalCollector: ThermalCollector by lazy { ThermalCollector(appContext) }
+
     val monitoring: MonitoringController by lazy { MonitoringController(appContext, settings) }
 
     val exporter: ThermalExportService by lazy { ThermalExportService(appContext, history) }
 
     val diagnostics: DiagnosticsEngine by lazy {
-        DiagnosticsEngine(appContext, history, settings, notifications)
+        DiagnosticsEngine(appContext, history, settings, notifications, thermalCollector)
     }
 
     /**

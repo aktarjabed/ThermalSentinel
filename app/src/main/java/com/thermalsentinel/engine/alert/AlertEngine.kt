@@ -2,11 +2,13 @@ package com.thermalsentinel.engine.alert
 
 import com.thermalsentinel.engine.domain.ThermalStatusBand
 
-/** Escalation ladder. [rank] gives a total order for comparisons. */
+/** Alert state vocabulary. [rank] orders severity; NORMAL and RECOVERY are non-alert states. */
 enum class AlertLevel(val storageValue: String, val label: String, val rank: Int) {
     NORMAL("normal", "Normal", 0),
     WARNING("warning", "Warning", 1),
-    CRITICAL("critical", "Critical", 2);
+    CRITICAL("critical", "Critical", 2),
+    /** Below an alert threshold and inside the hysteresis/recovery band. */
+    RECOVERY("recovery", "Recovering", 0);
 
     companion object {
         fun fromStorage(value: String?): AlertLevel =
@@ -85,9 +87,11 @@ data class AlertEvaluation(
  *
  *  - **Monotonic escalation**: the state may jump from NORMAL straight to
  *    CRITICAL, because a single 48 °C reading is already critical.
- *  - **Hysteresis on recovery**: CRITICAL drops to WARNING only at or below the
- *    critical recovery temperature, and WARNING drops to NORMAL only at or below
- *    the warning recovery temperature.
+ *  - **Explicit recovery phase**: a warning does not clear until its warning
+ *    recovery threshold is reached. A critical condition first steps down to
+ *    WARNING when it is still in the warning range, or to RECOVERY when it has
+ *    cooled below that range; RECOVERY must reach the warning recovery threshold
+ *    before returning to NORMAL.
  *  - **Cooldown applies to notifications, not to state**: while escalated, a
  *    repeat notification is allowed only after the cooldown expires. Escalations
  *    always notify — a cooldown must never swallow a critical transition.
@@ -151,26 +155,57 @@ object AlertEngine {
             }
         }
 
-        // ---- 2. Hysteresis: the state may not come down early. --------------
+        // ---- 2. Hysteresis and the explicit recovery phase. -----------------
         var level = implied
         var trigger = impliedTrigger
-        val heldByHysteresis = when (previous.level) {
-            AlertLevel.NORMAL -> false
+        var heldByHysteresis = false
+
+        when (previous.level) {
+            AlertLevel.NORMAL -> Unit
+
             AlertLevel.WARNING -> when {
-                temperature == null -> true // no evidence to clear with
-                implied.rank >= AlertLevel.WARNING.rank -> false
-                else -> temperature > rules.effectiveWarningRecoveryC(input.onExternalPower)
+                implied == AlertLevel.CRITICAL -> Unit
+                temperature == null -> {
+                    level = AlertLevel.WARNING // no temperature evidence to clear with
+                    heldByHysteresis = true
+                }
+                implied == AlertLevel.WARNING -> Unit
+                temperature > rules.effectiveWarningRecoveryC(input.onExternalPower) -> {
+                    level = AlertLevel.WARNING
+                    heldByHysteresis = true
+                }
+                else -> level = AlertLevel.RECOVERY
             }
+
             AlertLevel.CRITICAL -> when {
-                temperature == null && implied.rank < AlertLevel.CRITICAL.rank -> true
-                implied.rank >= AlertLevel.CRITICAL.rank -> false
-                else -> temperature!! > rules.criticalRecoveryC
+                implied == AlertLevel.CRITICAL -> Unit
+                temperature == null -> {
+                    level = AlertLevel.CRITICAL // absent temperature cannot clear a critical temperature alert
+                    heldByHysteresis = true
+                }
+                temperature > rules.criticalRecoveryC -> {
+                    level = AlertLevel.CRITICAL
+                    heldByHysteresis = true
+                }
+                implied == AlertLevel.WARNING -> Unit // recovered below critical, but still in the warning range
+                else -> level = AlertLevel.RECOVERY
+            }
+
+            AlertLevel.RECOVERY -> when {
+                implied == AlertLevel.CRITICAL || implied == AlertLevel.WARNING -> Unit
+                temperature == null -> {
+                    level = AlertLevel.RECOVERY
+                    heldByHysteresis = true
+                }
+                temperature <= rules.effectiveWarningRecoveryC(input.onExternalPower) -> {
+                    level = AlertLevel.NORMAL
+                }
+                else -> level = AlertLevel.RECOVERY
             }
         }
-        if (heldByHysteresis) {
-            level = previous.level
-            trigger = previous.trigger
-        }
+
+        // Preserve the cause through the recovery phase for diagnostics/history.
+        if (level != AlertLevel.NORMAL && trigger == null) trigger = previous.trigger
 
         // ---- 3. Notification gating. ----------------------------------------
         val actions = mutableListOf<AlertAction>()
@@ -178,25 +213,35 @@ object AlertEngine {
         var lastNotifiedAt = previous.lastNotifiedAtMillis
         val cooldownMillis = rules.cooldownMinutes * 60_000L
 
-        if (level == AlertLevel.NORMAL && previous.level != AlertLevel.NORMAL) {
-            // Recovery: always announced, never gated by the cooldown.
-            actions += AlertAction.Cleared(previous.level, temperature, status)
-            lastNotifiedLevel = AlertLevel.NORMAL
-        } else if (level != AlertLevel.NORMAL) {
-            val escalated = level.rank > lastNotifiedLevel.rank
-            val cooldownExpired = nowMillis - lastNotifiedAt >= cooldownMillis
-            val repeatAfterRecovery = level.rank > AlertLevel.NORMAL.rank &&
-                lastNotifiedLevel.rank <= AlertLevel.NORMAL.rank
-            if (escalated || (cooldownExpired && (level == lastNotifiedLevel || repeatAfterRecovery))) {
-                actions += AlertAction.Notify(
-                    level = level,
-                    trigger = trigger ?: AlertTrigger.BATTERY_TEMPERATURE,
-                    temperatureC = temperature,
-                    thermalStatus = status,
-                    isReminder = !escalated
-                )
-                lastNotifiedLevel = level
-                lastNotifiedAt = nowMillis
+        when (level) {
+            AlertLevel.NORMAL -> if (previous.level != AlertLevel.NORMAL) {
+                // Fully recovered: always announced, never gated by cooldown.
+                actions += AlertAction.Cleared(previous.level, temperature, status)
+                lastNotifiedLevel = AlertLevel.NORMAL
+            }
+
+            AlertLevel.RECOVERY -> {
+                // The active alert has ended, but recovery has not yet cleared.
+                // Reset severity so a new warning/critical escalation notifies
+                // immediately if the temperature rises again.
+                lastNotifiedLevel = AlertLevel.NORMAL
+            }
+
+            AlertLevel.WARNING, AlertLevel.CRITICAL -> {
+                val escalated = level.rank > lastNotifiedLevel.rank
+                val cooldownExpired = nowMillis - lastNotifiedAt >= cooldownMillis
+                val repeatAfterRecovery = lastNotifiedLevel == AlertLevel.NORMAL
+                if (escalated || (cooldownExpired && (level == lastNotifiedLevel || repeatAfterRecovery))) {
+                    actions += AlertAction.Notify(
+                        level = level,
+                        trigger = trigger ?: AlertTrigger.BATTERY_TEMPERATURE,
+                        temperatureC = temperature,
+                        thermalStatus = status,
+                        isReminder = !escalated
+                    )
+                    lastNotifiedLevel = level
+                    lastNotifiedAt = nowMillis
+                }
             }
         }
 

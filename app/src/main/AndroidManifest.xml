@@ -10,10 +10,15 @@
       when it is denied; the platform hides the notification and the app says so
       explicitly instead of implying that the notification is showing.
 
-      FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE — the monitoring service
-      is a continuous, user-initiated sensor read loop. It is not a data sync
-      (Android 15 caps dataSync at six hours per 24 h), so specialUse is the
-      honest type. It is declared with the required subtype property below.
+      FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE — targetSdk 36 requires
+      an API-appropriate type for this ongoing service. The service performs
+      continuous, user-requested local battery/thermal sensor monitoring: it is
+      not data transfer/import/export (dataSync), and it is not a health or
+      fitness sensor use case (health). Android 15+ caps dataSync services at six
+      hours per 24 h for apps targeting API 35+, so that type would also break
+      continuous monitoring. specialUse is the remaining documented category
+      for a valid use case not covered by another type; Google Play review still
+      requires a written justification. The subtype is declared below.
 
       Not requested in this phase: location, camera, microphone, contacts,
       PACKAGE_USAGE_STATS, QUERY_ALL_PACKAGES, BIND_VPN_SERVICE, exact alarms.
