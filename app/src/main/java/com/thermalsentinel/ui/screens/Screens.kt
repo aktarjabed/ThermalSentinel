@@ -243,6 +243,7 @@ private fun alertPillLabel(level: AlertLevel): String = when (level) {
     AlertLevel.NORMAL -> "ALERT: NORMAL"
     AlertLevel.WARNING -> "ALERT: WARNING"
     AlertLevel.CRITICAL -> "ALERT: CRITICAL"
+    AlertLevel.RECOVERY -> "ALERT: RECOVERING"
 }
 
 @Composable

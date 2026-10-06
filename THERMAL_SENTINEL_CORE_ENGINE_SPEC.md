@@ -1,8 +1,8 @@
 # Thermal Sentinel — Core Engine Specification
 
-Status: **implemented (v0.2.0-engine) and verified in CI** — `testDebugUnitTest`,
-`assembleDebug`, `assembleRelease` (R8 + resource shrinking) and `lintDebug`
-(`abortOnError = true`) all pass. Instrumented tests are written but not run in CI.
+Status: **Core V1 baseline implemented (v0.2.0-engine)**. This revision tightens
+headroom polling to Android's 10-second limit and makes recovery a first-class alert
+phase. The updated branch still requires CI and device validation before release.
 Scope: the V1 monitoring engine only — battery temperature, platform thermal status and
 headroom, charge state, history, alerts, the foreground service, diagnostics, CSV export
 and the home-screen widget.
@@ -48,7 +48,8 @@ com.thermalsentinel
 │   │   ├── BatteryCollector.kt      sticky broadcast + BatteryManager properties
 │   │   └── ThermalCollector.kt      PowerManager status + headroom, both listeners
 │   ├── monitoring/                  policy, no platform access
-│   │   ├── SamplingPolicy.kt        adaptive interval decision
+│   │   ├── SamplingPolicy.kt        adaptive battery/status interval decision
+│   │   ├── ThermalHeadroomReadLimiter.kt  monotonic, process-wide 10 s API gate
 │   │   ├── SampleAssembler.kt       request + snapshots → DeviceSample
 │   │   ├── HistoryMath.kt           series math, gaps, rate classification
 │   │   └── RetentionPolicy.kt       7 d raw / 90 d hourly / 400 d daily ladder
@@ -94,7 +95,7 @@ sealed interface Reading<out T> {
 |---|---|---|
 | `NOT_REPORTED_BY_PLATFORM` | The API exists and was called; this device did not include the value. | A broadcast extra the OEM omits. |
 | `UNSUPPORTED_ON_THIS_DEVICE` | The hardware/fuel gauge does not expose the property. | `getIntProperty` → `Integer.MIN_VALUE`, headroom → `NaN`. |
-| `REPORTED_VALUE_IMPLAUSIBLE` | A value arrived that cannot be physically true for a running device. | `0 mA` while discharging, `0` deci-°C temperature. |
+| `REPORTED_VALUE_IMPLAUSIBLE` | A value arrived outside that signal's physically plausible range. | Battery temperature outside −30…120 °C; voltage outside 1…20 000 mV. |
 | `NOT_COLLECTED_YET` | Nothing has been collected in this process. | First frame after launch. |
 | `NOT_RECORDED` | The value was absent at sample time and only the absence was stored. | Reading history back from Room. |
 
@@ -121,11 +122,11 @@ when the actual interval exceeds 2.5× the requested interval; the recorder then
 
 | Signal | Rule | Result |
 |---|---|---|
-| `EXTRA_TEMPERATURE` | outside −30…120 °C, or exactly 0 deci-°C | `REPORTED_VALUE_IMPLAUSIBLE` |
+| `EXTRA_TEMPERATURE` | outside −30…120 °C | `REPORTED_VALUE_IMPLAUSIBLE`; 0 °C is retained as a possible measurement |
 | `EXTRA_VOLTAGE` | outside 1…20 000 mV | `REPORTED_VALUE_IMPLAUSIBLE` |
-| `CURRENT_NOW` / `CURRENT_AVERAGE` | `Integer.MIN_VALUE` | `UNSUPPORTED_ON_THIS_DEVICE` |
-| `CURRENT_NOW` / `CURRENT_AVERAGE` | `0 µA` | `REPORTED_VALUE_IMPLAUSIBLE` |
+| `CURRENT_NOW` / `CURRENT_AVERAGE` | `Integer.MIN_VALUE` | `UNSUPPORTED_ON_THIS_DEVICE`; zero is retained as reported |
 | any `getIntProperty` | `Integer.MIN_VALUE` | `UNSUPPORTED_ON_THIS_DEVICE` |
+| `EXTRA_CYCLE_COUNT` | negative | `REPORTED_VALUE_IMPLAUSIBLE`; zero is a valid new-battery count |
 | `getThermalHeadroom` | `NaN` | `UNSUPPORTED_ON_THIS_DEVICE` |
 | `getThermalHeadroom` | infinite | `REPORTED_VALUE_IMPLAUSIBLE` |
 | `getThermalHeadroom` | negative | clamped to `0f` (documented platform behaviour) |
@@ -195,8 +196,9 @@ Gaps are never interpolated: an hourly bucket with no samples stores a null aver
 ### 5.2 `ThermalCollector`
 
 * `PowerManager.getCurrentThermalStatus()` (API 29+) plus `addThermalStatusListener`.
-* `PowerManager.getThermalHeadroom(forecastSeconds)` (API 30+), polled no faster than ~1 Hz;
-  polling faster is documented to *create* `NaN`, and `NaN` means "unsupported", not "cool".
+* `PowerManager.getThermalHeadroom(forecastSeconds)` (API 30+), polled no more often than
+  once every 10 seconds, as Android recommends. A single process-scoped collector is shared by
+  monitoring and diagnostics, and serializes calls; `NaN` means "unavailable", not "cool".
 * On API 36+, `addThermalHeadroomListener(Executor, …)` and
   `getThermalHeadroomThresholds()` are available; thresholds may change between calls, so
   they are re-read rather than cached.
@@ -212,10 +214,9 @@ Gaps are never interpolated: an hourly bucket with no samples stores a null aver
 
 | Condition (highest wins) | Interval | Reason |
 |---|---|---|
-| Alert escalated (WARNING/CRITICAL) | 5 s | Fast follow-up while a threshold is breached. |
-| Platform status ≥ SEVERE | 5 s | Platform is already throttling. |
+| Alert state CRITICAL or platform status ≥ SEVERE | 5 s | Fast follow-up while a critical condition is present. |
+| Alert state WARNING/RECOVERY or platform status ≥ MODERATE | 10 s | Accelerated follow-up through warning and recovery. |
 | Charging | 15 s | Charging heat is the dominant thermal load. |
-| Platform status ≥ MODERATE, or temperature ≥ warning − 2 °C | 10 s | Elevated but not yet alerting. |
 | Screen off | 60 s | Nothing is watching; save power. |
 | Battery < 15 % and unplugged | 90 s | The last few percent of charge are not spent on monitoring. |
 | Otherwise | 30 s | Normal cadence. |
@@ -247,21 +248,27 @@ configuration silently.
 
 ### 7.2 State machine
 
-Levels: `NORMAL → WARNING → CRITICAL`, with de-escalation governed by hysteresis.
+Levels: `NORMAL → WARNING → CRITICAL → RECOVERY → NORMAL`. The platform can also jump
+straight from `NORMAL` to `CRITICAL` when one measurement crosses the critical threshold.
 
 * **Escalation is monotonic and immediate.** A single 48.5 °C reading goes straight to
   `CRITICAL`; a cooldown can never swallow an escalation.
-* **Hysteresis governs the state.** WARNING clears at `warningThreshold − hysteresis`;
-  CRITICAL de-escalates to WARNING at `criticalThreshold − hysteresis`. A cooldown alone is
-  *not* hysteresis: without a recovery level, a device parked at 40.1 °C would re-alert every
-  cooldown forever.
+* **Independent recovery thresholds govern de-escalation.** `CRITICAL` is held until the
+  critical recovery threshold (`criticalThreshold − hysteresis`). If the reading is still in
+  the warning range, state steps down to `WARNING`; if it has cooled below that range, the
+  state enters `RECOVERY`. `WARNING` enters `RECOVERY` at its own recovery threshold
+  (`warningThreshold − hysteresis`). A confirming temperature at or below the warning
+  recovery threshold moves `RECOVERY` to `NORMAL`.
 * **The cooldown governs repeats only.** While the level is unchanged, `Notify` is emitted
   only when `now − lastNotifiedAt ≥ cooldown`.
+* **Recovery is not a notification level.** Entering it stops reminder notifications and
+  resets the escalation baseline; a new warning/critical condition notifies immediately.
+  "Back in range" is emitted only when recovery is confirmed, outside cooldown.
 * **Cleared is always announced**, deliberately outside the cooldown: suppressing "back in
   range" would leave a user staring at a stale warning.
-* **Absent data holds the state.** If both temperature and thermal status are unavailable,
-  the state is held and nothing is emitted — the engine does not "recover" because a sensor
-  stopped reporting.
+* **Absent data holds the state.** Missing temperature cannot clear an active temperature
+  alert, and missing temperature during recovery holds `RECOVERY`; the engine never recovers
+  just because a sensor stopped reporting.
 * Status-band triggers and temperature triggers are evaluated independently and the higher
   level wins; a status of `CRITICAL` or above maps to `CRITICAL`, anything from the selected
   lowest band upward maps to at least `WARNING`.
@@ -285,7 +292,7 @@ says the notification is hidden. The alert text quotes the threshold that actual
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Foreground service type | `specialUse` (+ `PROPERTY_SPECIAL_USE_FGS_SUBTYPE`) | Continuous monitoring fits no other type; `dataSync` is capped at 6 h/24 h on Android 15 and forbids `BOOT_COMPLETED` starts, which would break the product honestly. Play review requires a written justification. |
+| Foreground service type | `specialUse` (+ `PROPERTY_SPECIAL_USE_FGS_SUBTYPE`) | Target SDK is 36. The service continuously reads local battery/thermal telemetry; it is neither `dataSync` (transfer/import/export) nor a health/fitness session. Android 14+ requires a declared type and matching permission; Android 15+ caps `dataSync` at 6 h/24 h for apps targeting API 35+. `specialUse` is the documented category for a valid use case not covered by another type, and Play Console review requires a written subtype justification. Revalidate if the monitoring use case changes. |
 | Return value | `START_NOT_STICKY` | A sticky restart can be rejected on API 31+ and risks a crash loop; a silent restart would also make the app's own "monitoring stopped" reporting untrue. |
 | Where monitoring may start | A visible screen (`MonitoringController.start()`), or `resumeIfRequested()` from a visible screen | Foreground-service starts from the background are rejected on API 31+. `Application.onCreate` deliberately never starts the service. |
 | Stop reasons | `USER_REQUEST`, `PLATFORM_STOPPED`, `PERMISSION_REVOKED`, `UNKNOWN` | Written from `onDestroy` on the *application* scope, which outlives the service, and only when the persisted intent is still "on" — so an OEM kill is recorded and shown, never disguised as the user's choice. |
@@ -351,10 +358,11 @@ JVM unit tests (run by `./gradlew testDebugUnitTest` in CI):
 | Area | Test class | Cases |
 |---|---|---|
 | Domain availability | `ReadingTest` | `Present`/`Absent` round trip, `valueOrNull`, `absenceReason`, display labels for every reason. |
-| Plausibility | `PlatformValuesTest` | `MIN_VALUE` → unsupported; 0 deci-°C → implausible; voltage bounds; `NaN` headroom → unsupported; negative headroom → 0; unknown status level → `UNKNOWN`; deci-°C conversions round-trip. |
-| Alert engine | `AlertEngineTest` | escalation NORMAL→WARNING→CRITICAL; jump to CRITICAL; hysteresis blocks early clear; absent-data hold; cooldown suppresses repeats but not escalation; reminder after cooldown; cleared always emitted; status-band mapping; evaluation counter and explanation text. |
+| Plausibility | `PlatformValuesTest` | `MIN_VALUE` → unsupported; zero temperature/current/cycle count retained when valid; voltage bounds; `NaN` headroom → unsupported; negative headroom → 0; unknown status level → `UNKNOWN`; deci-°C conversions round-trip. |
+| Alert engine | `AlertEngineTest` | escalation NORMAL→WARNING→CRITICAL; jump to CRITICAL; explicit RECOVERY phase and confirmation; independent recovery thresholds; absent-data hold; cooldown suppresses repeats but not escalation; reminder after cooldown; cleared always emitted; status-band mapping; evaluation counter and explanation text. |
 | Alert rules | `ThermalAlertRulesTest` | every `RuleViolation`; `clamped()` never leaves an invalid set; charging rule threshold selection and recovery. |
-| Sampling policy | `SamplingPolicyTest` | priority order of the eight branches, reason strings, 5 s floor. |
+| Sampling policy | `SamplingPolicyTest` | priority order of the eight branches, recovery cadence, reason strings, 5 s floor. |
+| Headroom API cadence | `ThermalHeadroomReadLimiterTest` | first read, 10 s minimum interval, exact boundary, backwards-clock fail-closed behavior. |
 | History maths | `HistoryMathTest` | gaps split segments; `null` points never bridge; min/max/average over present values only; `timeAboveThresholdMillis` counts only fully measured intervals and respects the gap limit; rise-rate needs ≥3 points and ≥3 min; HEATING/COOLING thresholds; `largestGapMillis`. |
 | Retention boundaries | `RetentionPolicyTest` | bucket starts are floor-aligned; cut-offs; expected sample counts. |
 | CSV | `ThermalCsvTest` | quoting/escaping, absence → empty field, header stability, decimal separator independence. |

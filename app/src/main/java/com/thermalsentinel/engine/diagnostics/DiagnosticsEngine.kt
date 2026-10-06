@@ -4,13 +4,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
-import android.os.Build
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import com.thermalsentinel.engine.alert.AlertNotificationPublisher
+import com.thermalsentinel.engine.collector.ThermalCollector
 import com.thermalsentinel.engine.data.EngineSettingsRepository
 import com.thermalsentinel.engine.data.ThermalHistoryRepository
 import com.thermalsentinel.engine.domain.ThermalFormatting
+import com.thermalsentinel.engine.domain.displayLabel
 import com.thermalsentinel.engine.monitoring.HistoryMath
 import com.thermalsentinel.engine.monitoring.RetentionPolicy
 import com.thermalsentinel.engine.monitoring.SamplingPolicy
@@ -49,7 +50,8 @@ class DiagnosticsEngine(
     private val context: Context,
     private val history: ThermalHistoryRepository,
     private val settings: EngineSettingsRepository,
-    private val notifications: AlertNotificationPublisher
+    private val notifications: AlertNotificationPublisher,
+    private val thermalCollector: ThermalCollector
 ) {
 
     suspend fun runChecks(nowMillis: Long = System.currentTimeMillis()): List<ReadinessCheck> {
@@ -137,29 +139,32 @@ class DiagnosticsEngine(
     }
 
     private fun headroomCheck(): ReadinessCheck {
-        val manager = context.getSystemService(PowerManager::class.java)
-        val available = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && manager != null
-        if (!available) {
+        if (!ThermalCollector.isHeadroomApiAvailable || !thermalCollector.isPowerManagerAvailable) {
             return ReadinessCheck(
                 id = "thermal_headroom",
                 title = "Thermal headroom",
                 state = CheckState.FAILED,
-                detail = "Thermal headroom requires Android 11 or newer, and PowerManager was unavailable."
+                detail = "Thermal headroom requires Android 11 or newer and an available PowerManager."
             )
         }
-        val headroom = manager!!.getThermalHeadroom(10)
-        val supported = !headroom.isNaN()
+
+        // Use the same process-wide, monotonic 10-second throttle as the monitor.
+        // Diagnostics must not create a second polling path or turn NaN into 0.
+        val reading = thermalCollector.headroom()
+        val value = reading.valueOrNull
         return ReadinessCheck(
             id = "thermal_headroom",
             title = "Thermal headroom",
-            state = if (supported) CheckState.OK else CheckState.UNKNOWN,
-            detail = if (supported) {
+            state = if (value != null) CheckState.OK else CheckState.UNKNOWN,
+            detail = if (value != null) {
                 // Headroom is a ratio, never a temperature; 1.0 is the platform's
-                // SEVERE threshold and values above 1.0 are possible.
-                "PowerManager reports headroom ${ThermalFormatting.headroom(headroom)} (1.0 is the platform's severe threshold)."
+                // severe threshold and values above 1.0 are possible.
+                "Most recent headroom reading: ${ThermalFormatting.headroom(value)} " +
+                    "(1.0 is the platform's severe threshold; reads are limited to once per " +
+                    "${ThermalCollector.HEADROOM_MIN_INTERVAL_MILLIS / 1_000L} seconds)."
             } else {
-                "This device reports NaN for thermal headroom, which means the API is unsupported. " +
-                    "It is not a cold reading, so the app shows the value as unavailable."
+                "Thermal headroom is unavailable (${reading.absenceReason?.displayLabel ?: "no reading"}). " +
+                    "It is not a zero or a temperature, so the app reports it as unavailable."
             }
         )
     }

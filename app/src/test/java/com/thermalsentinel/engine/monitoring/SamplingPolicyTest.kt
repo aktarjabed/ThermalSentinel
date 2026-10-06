@@ -83,6 +83,14 @@ class SamplingPolicyTest {
     }
 
     @Test
+    fun recoveryStateKeepsTheAcceleratedCadenceUntilConfirmedNormal() {
+        val decision = SamplingPolicy.decide(context(alertLevel = AlertLevel.RECOVERY))
+
+        assertEquals(SamplingPolicy.ELEVATED_INTERVAL_MS, decision.intervalMillis)
+        assertTrue(decision.explanation.contains("recovering"))
+    }
+
+    @Test
     fun unknownThermalStatusDoesNotAccelerateSampling() {
         // UNKNOWN means "no information", so it must not be read as elevated.
         val decision = SamplingPolicy.decide(context(thermalStatus = ThermalStatusBand.UNKNOWN))

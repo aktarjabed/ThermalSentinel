@@ -12,10 +12,12 @@ import kotlin.math.roundToInt
  *
  *  - `BatteryManager.getIntProperty` returns `Int.MIN_VALUE` when the property is
  *    unsupported, and `getLongProperty` returns `Long.MIN_VALUE`.
- *  - `PowerManager.getThermalHeadroom` returns `NaN` when unsupported, and may
- *    also return `NaN` when polled far more often than about once per second.
- *  - Some OEM builds report `0` for a sensor they do not have, and `0 mA` while
- *    discharging or `0.0 °C` for a running battery cannot be true.
+ *  - `PowerManager.getThermalHeadroom` returns `NaN` when unsupported; the
+ *    collector enforces Android's minimum polling interval to avoid self-induced
+ *    `NaN` results.
+ *  - Zero is a valid numeric report for battery temperature, current, capacity,
+ *    and cycle count. Only documented sentinels and values outside a signal's
+ *    physical range are treated as absent.
  *
  * No `android.*` imports: the whole file is exercised by JVM unit tests.
  */
@@ -57,8 +59,7 @@ object PlatformValues {
         if (deciCelsius < MIN_PLAUSIBLE_DECI_CELSIUS || deciCelsius > MAX_PLAUSIBLE_DECI_CELSIUS) {
             return Reading.Absent(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE)
         }
-        // Exactly 0.0 °C on a powered battery means "no sensor", not "freezing".
-        if (deciCelsius == 0) return Reading.Absent(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE)
+        // 0.0 °C is physically possible and is not a documented missing-value sentinel.
         return Reading.Present(deciCelsiusToCelsius(deciCelsius))
     }
 
@@ -80,16 +81,14 @@ object PlatformValues {
     }
 
     /**
-     * Current is signed: negative discharges, positive charges. An exact zero on
-     * a live device means the fuel gauge did not report, so it is surfaced as
-     * implausible rather than as a reassuring "0 mA".
+     * Current is signed: negative discharges, positive charges. Zero is retained
+     * as a measured value; `Int.MIN_VALUE` is the documented unsupported sentinel.
      */
     fun currentReading(microAmps: Int?): Reading<Int> {
         if (microAmps == null) return Reading.Absent(AbsenceReason.NOT_REPORTED_BY_PLATFORM)
         if (microAmps == INT_UNSUPPORTED_SENTINEL) {
             return Reading.Absent(AbsenceReason.UNSUPPORTED_ON_THIS_DEVICE)
         }
-        if (microAmps == 0) return Reading.Absent(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE)
         return Reading.Present(microAmps)
     }
 
@@ -111,7 +110,7 @@ object PlatformValues {
             // The extra itself is API 34+; on older platforms it cannot be read.
             return Reading.Absent(AbsenceReason.UNSUPPORTED_ON_THIS_DEVICE)
         }
-        if (raw <= 0) return Reading.Absent(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE)
+        if (raw < 0) return Reading.Absent(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE)
         return Reading.Present(raw)
     }
 

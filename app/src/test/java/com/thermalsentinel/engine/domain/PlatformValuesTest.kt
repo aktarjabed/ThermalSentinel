@@ -32,17 +32,17 @@ class PlatformValuesTest {
     }
 
     @Test
-    fun zeroAndOutOfRangeTemperaturesAreImplausible() {
-        assertEquals(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE, reason(PlatformValues.temperatureReading(0)))
+    fun outOfRangeTemperaturesAreImplausible() {
         assertEquals(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE, reason(PlatformValues.temperatureReading(-400)))
         assertEquals(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE, reason(PlatformValues.temperatureReading(1300)))
     }
 
     @Test
-    fun aPlausibleTemperatureIsPresent() {
+    fun plausibleTemperaturesIncludingZeroArePresent() {
         assertEquals(38.5f, PlatformValues.temperatureReading(385).valueOrNull!!, 0.001f)
-        // -30.0 °C is the coldest value the plausibility window accepts, and it is
-        // reported as a measurement rather than as an absence.
+        // Zero degrees Celsius is a possible battery temperature, not a missing sentinel.
+        assertEquals(0f, PlatformValues.temperatureReading(0).valueOrNull!!, 0.001f)
+        // -30.0 °C is the coldest value the plausibility window accepts.
         assertEquals(-30f, PlatformValues.temperatureReading(-300).valueOrNull!!, 0.001f)
     }
 
@@ -79,10 +79,13 @@ class PlatformValuesTest {
     }
 
     @Test
-    fun zeroCurrentIsImplausibleRatherThanReassuring() {
-        // "0 mA" and "this fuel gauge does not report current" are different facts.
-        assertEquals(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE, reason(PlatformValues.currentReading(0)))
+    fun zeroCurrentIsAValidMeasurementAndSentinelMeansUnsupported() {
+        assertEquals(0, PlatformValues.currentReading(0).valueOrNull)
         assertEquals(-450_000, PlatformValues.currentReading(-450_000).valueOrNull)
+        assertEquals(
+            AbsenceReason.UNSUPPORTED_ON_THIS_DEVICE,
+            reason(PlatformValues.currentReading(PlatformValues.INT_UNSUPPORTED_SENTINEL))
+        )
     }
 
     @Test
@@ -96,7 +99,8 @@ class PlatformValuesTest {
     fun cycleCountAbsenceIsUnsupportedRatherThanAnError() {
         // EXTRA_CYCLE_COUNT is API 34+, so absence on older platforms is expected.
         assertEquals(AbsenceReason.UNSUPPORTED_ON_THIS_DEVICE, reason(PlatformValues.cycleCountReading(null)))
-        assertEquals(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE, reason(PlatformValues.cycleCountReading(0)))
+        assertEquals(0, PlatformValues.cycleCountReading(0).valueOrNull)
+        assertEquals(AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE, reason(PlatformValues.cycleCountReading(-1)))
         assertEquals(412, PlatformValues.cycleCountReading(412).valueOrNull)
     }
 

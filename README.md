@@ -8,12 +8,11 @@ Compose UI: a foreground service that samples the battery and thermal APIs, a lo
 history database with a retention ladder, a hysteresis-aware alert engine, a
 diagnostics surface, CSV export and a real home-screen widget.
 
-> **Build status: verified in CI.** `./gradlew testDebugUnitTest assembleDebug
-> assembleRelease lintDebug` passes in
-> [`.github/workflows/ci.yml`](.github/workflows/ci.yml): 88 JVM unit tests, the
-> debug build, the minified release build and lint (`abortOnError = true`).
-> Instrumented tests are written but not yet part of CI, because they need a
-> device or emulator.
+> **Build status:** the parent revision passed CI. This update adds the shared
+> 10-second headroom throttle, explicit recovery state and zero-value/mapping
+> coverage; run
+> `./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug` in a JDK 17
+> Android build environment before release. Instrumented/device tests are not run in CI.
 
 | | |
 |---|---|
@@ -34,9 +33,9 @@ diagnostics surface, CSV export and a real home-screen widget.
 | Monitoring foreground service (`specialUse`, `START_NOT_STICKY`, user-started only) | Implemented |
 | Adaptive sampling (5–90 s by state) with a stated reason for every interval | Implemented |
 | Battery collector (sticky broadcast + `BatteryManager` properties, API-gated extras) | Implemented |
-| Thermal collector (status, listener, headroom) | Implemented |
+| Thermal collector (status listener; shared headroom read limited to once per 10 s) | Implemented |
 | Room v1 history: raw / hourly / daily retention ladder, charging sessions, event timeline | Implemented |
-| Alert engine: hysteresis, cooldown, charging rule, platform-status bands | Implemented |
+| Alert engine: NORMAL / WARNING / CRITICAL / RECOVERY, hysteresis, cooldown, charging rule, platform-status bands | Implemented |
 | Alert + ongoing notifications, two channels, permission-aware | Implemented |
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
 | CSV export through the app cache and the system share sheet | Implemented |
@@ -121,17 +120,19 @@ Per-screen status is in [`UI_FEATURE_MATRIX.md`](UI_FEATURE_MATRIX.md).
 
 ### Tests
 
-**88 JVM unit tests** (15 UI contract tests + 73 engine tests):
+**99 JVM unit tests** (15 UI contract tests + 84 engine tests):
 
 | Class | Tests | Covers |
 |---|---|---|
-| `AlertEngineTest` | 14 | Escalation, jump to critical, hysteresis hold, cooldown vs. escalation, reminders, cleared-is-always-announced, absent-data hold, status bands, charging rule, `since` tracking |
+| `AlertEngineTest` | 17 | Escalation, jump to critical, explicit recovery phase, hysteresis hold, cooldown vs. escalation, reminders, cleared-is-always-announced, absent-data hold, status bands, charging rule, storage round-trip, `since` tracking |
 | `ThermalAlertRulesTest` | 9 | Every `RuleViolation`, `clamped()` validity, charging thresholds, lowest triggered band |
-| `PlatformValuesTest` | 14 | Unsupported sentinels, `0 mA` / `0 °C` implausibility, voltage and percent bounds, `NaN` headroom, unknown status levels |
-| `SamplingPolicyTest` | 11 | Branch priority, charging vs. low battery, unknown status is not elevated, 5 s floor |
+| `PlatformValuesTest` | 14 | Unsupported sentinels, valid zero temperature/current/cycle counts, voltage and percent bounds, `NaN` headroom, unknown status levels |
+| `SamplingPolicyTest` | 12 | Branch priority, charging vs. low battery, recovery cadence, unknown status is not elevated, 5 s floor |
+| `ThermalHeadroomReadLimiterTest` | 4 | First read, 10 s minimum interval, exact boundary, backwards-clock fail-closed behavior |
 | `HistoryMathTest` | 9 | Segment splitting, holes, min/max/avg over present values only, threshold time, rate classification |
 | `ReadingTest` | 6 | `Present`/`Absent` semantics, covariance, labels |
 | `ThermalCsvTest` | 6 | Header contract, empty fields for absent values, locale-independent decimals, quoting, timestamps |
+| `SampleMappersTest` | 3 | Real zero temperature, explicit absent-value round-trip, enums and sampling metadata |
 | `RetentionPolicyTest` | 4 | Bucket alignment, cut-offs, ladder ordering, divide-by-zero guard |
 | `EngineContractParsingTest`, `UiPreferencesParsingTest`, `RouteContractTest` | 15 | Storage-value round trips, fallbacks, routes ↔ drawer consistency |
 
