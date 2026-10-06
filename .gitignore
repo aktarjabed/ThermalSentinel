@@ -1,0 +1,73 @@
+# Build outputs
+*.apk
+*.ap_
+*.aab
+*.aar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+.gradle/
+build/
+*/build/
+/release/
+captures/
+out/
+.externalNativeBuild/
+.cxx/
+.navigation/
+.kotlin/
+
+# Local configuration (sdk.dir is machine-specific)
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Native (reserved for later phases)
+obj/
+libs/
+jniLibs/
+
+# Signing — never commit
+*.jks
+*.keystore
+keystore.properties
+
+# Profiler / crash dumps
+*.hprof
+
+# Logs
+*.log
+logs/
+
+# Environment services (reserved for later phases)
+google-services.json
+!google-services.json.example
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Fastlane (reserved)
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Editors
+.vscode/
+
+# OS junk
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
