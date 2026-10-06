@@ -1,17 +1,20 @@
 package com.thermalsentinel.engine.widget
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.LocalContext
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.updateAll
 import androidx.glance.background
 // The day/night factory lives in androidx.glance.color; androidx.glance.unit only
 // declares the ColorProvider interface that TextStyle accepts.
@@ -78,6 +81,9 @@ private fun WidgetContent(
     noData: String,
     monitoringOff: String
 ) {
+    // Glance composables have no activity context of their own; LocalContext is the
+    // one the widget is being rendered for, which is what the tap intent needs.
+    val context = LocalContext.current
     val background = when (style) {
         WidgetStyle.TRANSPARENT -> ColorProvider(day = Color.Transparent, night = Color.Transparent)
         WidgetStyle.THEMED -> ColorProvider(day = Color(0xFFE8F0FE), night = Color(0xFF1F2A44))
@@ -111,7 +117,7 @@ private fun WidgetContent(
             .fillMaxSize()
             .background(background)
             .padding(12.dp)
-            .clickable(actionStartActivity<MainActivity>()),
+            .clickable(actionStartActivity(Intent(context, MainActivity::class.java))),
         verticalAlignment = Alignment.Vertical.Top,
         horizontalAlignment = Alignment.Horizontal.Start
     ) {

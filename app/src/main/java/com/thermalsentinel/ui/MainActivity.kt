@@ -1,5 +1,6 @@
 package com.thermalsentinel.ui
 
+import com.thermalsentinel.R
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle

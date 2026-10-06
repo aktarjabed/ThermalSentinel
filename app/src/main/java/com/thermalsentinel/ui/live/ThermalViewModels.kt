@@ -239,7 +239,7 @@ class AlertRulesViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setChargingWarningEnabled(value: Boolean) = update { it.copy(chargingWarningEnabled = value) }
 
-    fun setChargingThreshold(value: Float) = update { it.copy(chargingWarningThresholdC = value) }
+    fun setChargingWarningThreshold(value: Float) = update { it.copy(chargingWarningThresholdC = value) }
 
     fun toggleStatusBand(band: ThermalStatusBand) = update { current ->
         val bands = current.statusBandTriggers.toMutableSet()
