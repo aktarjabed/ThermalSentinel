@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import com.thermalsentinel.engine.alert.AlertNotificationPublisher
 import com.thermalsentinel.engine.collector.ThermalCollector
 import com.thermalsentinel.engine.data.EngineSettingsRepository
+import com.thermalsentinel.engine.data.MonitoringStopReason
 import com.thermalsentinel.engine.data.ThermalHistoryRepository
 import com.thermalsentinel.engine.domain.ThermalFormatting
 import com.thermalsentinel.engine.domain.displayLabel
@@ -281,7 +282,10 @@ class DiagnosticsEngine(
             detail = buildString {
                 append("Whether this manufacturer's battery manager will stop a foreground service cannot be ")
                 append("verified programmatically. The app records what actually happened instead: ")
-                if (stoppedRecently && stopReason.storageValue == "platform_stopped") {
+                // Compared against the enum, never against a copy of its storage
+                // string: renaming a persisted value must change what this check
+                // says, not leave it silently reporting nothing.
+                if (stoppedRecently && stopReason == MonitoringStopReason.PLATFORM_STOPPED) {
                     append("monitoring was stopped by Android ")
                     append(ThermalFormatting.duration(nowMillis - (stoppedAt ?: nowMillis)))
                     append(" ago.")

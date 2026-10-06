@@ -25,7 +25,13 @@ data class MaintenanceResult(
     val deletedSamples: Int = 0,
     val deletedHourlyBuckets: Int = 0,
     val deletedDailyBuckets: Int = 0,
-    val deletedEvents: Int = 0
+    val deletedEvents: Int = 0,
+    /**
+     * Reported apart from [deletedEvents] on purpose. A charging session lives in
+     * its own table; folding its deletions into the event count would make the
+     * number in Diagnostics describe rows that were never events.
+     */
+    val deletedChargingSessions: Int = 0
 )
 
 data class RowCounts(
@@ -368,10 +374,11 @@ class ThermalHistoryRepository(
         val deletedSessions = sessionDao.deleteClosedBefore(dailyBoundary)
 
         return result.copy(
-            deletedSamples = deletedSamples + result.deletedSamples,
+            deletedSamples = deletedSamples,
             deletedHourlyBuckets = deletedHourly,
             deletedDailyBuckets = deletedDaily,
-            deletedEvents = deletedEvents + deletedSessions
+            deletedEvents = deletedEvents,
+            deletedChargingSessions = deletedSessions
         )
     }
 
@@ -438,10 +445,23 @@ class ThermalHistoryRepository(
         return false
     }
 
+    /**
+     * Heating and cooling detection for the timeline.
+     *
+     * The window is selected by **time**, never by row count. The sampling cadence
+     * changes with the alert state, so "the last 24 rows" means ten minutes at the
+     * normal cadence and barely two minutes at the five-second event cadence: a
+     * count-based window would go blind exactly when the device is heating fastest,
+     * because the samples it needs no longer fit in the count. The sample being
+     * recorded is already committed by [record] when this runs, so it arrives in
+     * this query and must not be appended a second time — a duplicate would weigh
+     * the newest reading twice in the fit and add a point the engine never measured.
+     */
     private suspend fun detectRateEvent(sample: DeviceSample): ThermalEventType? {
-        val recent = sampleDao.recent(RATE_WINDOW_SAMPLES)
-        val points = HistoryMath.seriesPoints(recent.map(SampleMappers::toSeriesPoint)) +
-            HistoryMath.SeriesPoint(sample.timestampMillis, sample.battery.temperatureC.valueOrNull)
+        val points = HistoryMath.seriesPoints(
+            sampleDao.since(sample.timestampMillis - RATE_WINDOW_MILLIS)
+                .map(SampleMappers::toSeriesPoint)
+        )
         val verdict = HistoryMath.classifyRate(points, RATE_WINDOW_MILLIS)
         val candidate = when (verdict) {
             HistoryMath.RateVerdict.HEATING -> ThermalEventType.HEATING_EVENT
@@ -538,8 +558,9 @@ class ThermalHistoryRepository(
 
     companion object {
         const val MAINTENANCE_INTERVAL_MILLIS = 60 * 60 * 1000L
+
+        /** Look-back for the rate detector, and the window `since()` is queried with. */
         const val RATE_WINDOW_MILLIS = 10 * 60 * 1000L
-        const val RATE_WINDOW_SAMPLES = 24
         const val RATE_EVENT_DEDUPE_MILLIS = 15 * 60 * 1000L
 
         /** 40.0 °C in tenths of a degree: the fixed reference used by aggregates. */

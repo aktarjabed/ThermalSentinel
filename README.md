@@ -8,9 +8,12 @@ Compose UI: a foreground service that samples the battery and thermal APIs, a lo
 history database with a retention ladder, a hysteresis-aware alert engine, a
 diagnostics surface, CSV export and a real home-screen widget.
 
-> **Build status:** the parent revision passed CI. This update adds the shared
-> 10-second headroom throttle, explicit recovery state and zero-value/mapping
-> coverage; run
+> **Build status:** CI runs the unit tests, both `assemble` variants and `lint` on
+> every push and pull request, and it fails on a Gradle error (the step uses
+> `shell: bash`, so `| tee` cannot mask a build failure). This update makes the rate
+> fit least-squares over a time window, ends an alert notification when the alert
+> ends rather than when recovery confirms, requests `POST_NOTIFICATIONS` at runtime,
+> and makes `MonitoringController` the only writer of the monitoring intent. Run
 > `./gradlew testDebugUnitTest assembleDebug assembleRelease lintDebug` in a JDK 17
 > Android build environment before release. Instrumented/device tests are not run in CI.
 
@@ -18,7 +21,7 @@ diagnostics surface, CSV export and a real home-screen widget.
 |---|---|
 | Namespace (R/BuildConfig) | `com.thermalsentinel` |
 | applicationId | `com.thermalsentinel.ui` (debug variant adds `.debug`) |
-| Gradle project name | `ThermalSentinelUi` |
+| Gradle project name | `ThermalSentinel` |
 | minSdk / targetSdk / compileSdk | 31 / 36 / 37 |
 | AGP / Gradle / Kotlin | 9.4.0 / 9.6.0 / 2.4.10 |
 | Compose BOM | 2026.09.00 |
@@ -36,7 +39,7 @@ diagnostics surface, CSV export and a real home-screen widget.
 | Thermal collector (status listener; shared headroom read limited to once per 10 s) | Implemented |
 | Room v1 history: raw / hourly / daily retention ladder, charging sessions, event timeline | Implemented |
 | Alert engine: NORMAL / WARNING / CRITICAL / RECOVERY, hysteresis, cooldown, charging rule, platform-status bands | Implemented |
-| Alert + ongoing notifications, two channels, permission-aware | Implemented |
+| Alert + ongoing notifications, two channels, permission-aware, `POST_NOTIFICATIONS` requested once per install | Implemented |
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
 | CSV export through the app cache and the system share sheet | Implemented |
 | Glance home-screen widget, pushed on new samples (≤1/min) | Implemented |
@@ -120,16 +123,16 @@ Per-screen status is in [`UI_FEATURE_MATRIX.md`](UI_FEATURE_MATRIX.md).
 
 ### Tests
 
-**99 JVM unit tests** (15 UI contract tests + 84 engine tests):
+**103 JVM unit tests** (15 UI contract tests + 88 engine tests):
 
 | Class | Tests | Covers |
 |---|---|---|
-| `AlertEngineTest` | 17 | Escalation, jump to critical, explicit recovery phase, hysteresis hold, cooldown vs. escalation, reminders, cleared-is-always-announced, absent-data hold, status bands, charging rule, storage round-trip, `since` tracking |
+| `AlertEngineTest` | 18 | Escalation, jump to critical, explicit recovery phase, hysteresis hold, cooldown vs. escalation, reminders, cleared-is-always-announced, ending an alert cancels the visible notification once, absent-data hold, status bands, charging rule, storage round-trip, `since` tracking |
 | `ThermalAlertRulesTest` | 9 | Every `RuleViolation`, `clamped()` validity, charging thresholds, lowest triggered band |
 | `PlatformValuesTest` | 14 | Unsupported sentinels, valid zero temperature/current/cycle counts, voltage and percent bounds, `NaN` headroom, unknown status levels |
 | `SamplingPolicyTest` | 12 | Branch priority, charging vs. low battery, recovery cadence, unknown status is not elevated, 5 s floor |
 | `ThermalHeadroomReadLimiterTest` | 4 | First read, 10 s minimum interval, exact boundary, backwards-clock fail-closed behavior |
-| `HistoryMathTest` | 9 | Segment splitting, holes, min/max/avg over present values only, threshold time, rate classification |
+| `HistoryMathTest` | 12 | Segment splitting, holes, min/max/avg over present values only, threshold time, least-squares rate fit (interior points used, out-of-window samples ignored, no time axis → no rate) |
 | `ReadingTest` | 6 | `Present`/`Absent` semantics, covariance, labels |
 | `ThermalCsvTest` | 6 | Header contract, empty fields for absent values, locale-independent decimals, quoting, timestamps |
 | `SampleMappersTest` | 3 | Real zero temperature, explicit absent-value round-trip, enums and sampling metadata |

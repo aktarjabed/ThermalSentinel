@@ -15,9 +15,14 @@ interface ThermalSampleDao {
     @Query("SELECT * FROM thermal_samples ORDER BY timestampMillis DESC LIMIT 1")
     suspend fun latest(): ThermalSampleEntity?
 
-    @Query("SELECT * FROM thermal_samples ORDER BY timestampMillis DESC LIMIT :limit")
-    suspend fun recent(limit: Int): List<ThermalSampleEntity>
-
+    /**
+     * Everything from [fromMillis] on, oldest first.
+     *
+     * The rate detector asks for a *time* window rather than a row limit on
+     * purpose — see `ThermalHistoryRepository.detectRateEvent` — so no
+     * "newest N rows" query is offered here, and none should be added: a row count
+     * means a different amount of elapsed time at every sampling cadence.
+     */
     @Query("SELECT * FROM thermal_samples WHERE timestampMillis >= :fromMillis ORDER BY timestampMillis ASC")
     suspend fun since(fromMillis: Long): List<ThermalSampleEntity>
 

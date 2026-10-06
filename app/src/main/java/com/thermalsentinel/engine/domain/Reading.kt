@@ -40,6 +40,14 @@ enum class AbsenceReason(val storageValue: String) {
     NOT_COLLECTED_YET("not_collected"),
 
     /**
+     * Collection was running in this process and has since been stopped. Distinct
+     * from [NOT_COLLECTED_YET] (never started) and from [UNSUPPORTED_ON_THIS_DEVICE]
+     * (the device cannot report it): the value a stale reader would find is a
+     * *last* value from a dead session, and must not be presented as current.
+     */
+    SAMPLING_STOPPED("sampling_stopped"),
+
+    /**
      * The value was absent when the sample was taken, and only the absence was
      * persisted. History rows cannot distinguish "unsupported" from "not
      * reported", and this engine does not guess backwards in time.
@@ -81,5 +89,6 @@ val AbsenceReason.displayLabel: String
         AbsenceReason.UNSUPPORTED_ON_THIS_DEVICE -> "Unavailable on this device"
         AbsenceReason.REPORTED_VALUE_IMPLAUSIBLE -> "Reported value not plausible"
         AbsenceReason.NOT_COLLECTED_YET -> "Not measured yet"
+        AbsenceReason.SAMPLING_STOPPED -> "Monitoring is off"
         AbsenceReason.NOT_RECORDED -> "Not measured"
     }

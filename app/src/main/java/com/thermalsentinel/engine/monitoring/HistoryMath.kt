@@ -97,24 +97,59 @@ object HistoryMath {
     }
 
     /**
-     * Temperature change per minute across the requested window.
+     * Temperature change per minute across the requested window, as a
+     * least-squares slope over **every** measured point inside it.
      *
-     * Returns null when there is not enough evidence (fewer than
-     * [MIN_POINTS_FOR_RATE] measured points, or a window shorter than
-     * [MIN_RATE_WINDOW_MILLIS]). A single pair of samples is not a trend.
+     * Not an endpoint slope. The engine's claim is "this device is heating", and a
+     * two-point answer makes that claim depend entirely on which two samples
+     * happened to open and close the window: one noisy reading at either end, or
+     * one sample arriving late, flips the sign of the trend without the device
+     * having done anything. Fitting the whole window spends the same evidence on a
+     * verdict that interior samples can also contradict.
+     *
+     * Returns null when there is not enough evidence: fewer than
+     * [MIN_POINTS_FOR_RATE] measured points in the window, or a fitted span
+     * shorter than [MIN_RATE_WINDOW_MILLIS]. A single pair of samples is not a
+     * trend, and neither is a window too short to average anything over.
      */
     fun riseRateCPerMinute(points: List<SeriesPoint>, windowMillis: Long): Float? {
         if (windowMillis < MIN_RATE_WINDOW_MILLIS) return null
-        val valued = points.filter { it.temperatureC != null }.sortedBy { it.timestampMillis }
+        val newest = points.filter { it.temperatureC != null }
+            .maxOfOrNull { it.timestampMillis }
+            ?: return null
+        val cutoff = newest - windowMillis
+        val valued = points
+            .filter { it.temperatureC != null && it.timestampMillis >= cutoff }
+            .sortedBy { it.timestampMillis }
         if (valued.size < MIN_POINTS_FOR_RATE) return null
-        val newest = valued.last()
-        val cutoff = newest.timestampMillis - windowMillis
-        val oldest = valued.firstOrNull { it.timestampMillis >= cutoff } ?: return null
-        val elapsed = newest.timestampMillis - oldest.timestampMillis
-        if (elapsed < MIN_RATE_WINDOW_MILLIS) return null
-        val firstValue = oldest.temperatureC ?: return null
-        val lastValue = newest.temperatureC ?: return null
-        return (lastValue - firstValue) / (elapsed / 60_000f)
+        if (newest - valued.first().timestampMillis < MIN_RATE_WINDOW_MILLIS) return null
+
+        // Times are normalised to minutes relative to the first point of the fit.
+        // Absolute epoch milliseconds in a double-precision sum of squares lose the
+        // digits that decide a slope of 0.4 °C/min.
+        val startTimeMillis = valued.first().timestampMillis
+        val samples = valued.mapNotNull { point ->
+            val value = point.temperatureC ?: return@mapNotNull null
+            ((point.timestampMillis - startTimeMillis) / 60_000.0) to value.toDouble()
+        }
+        var sumX = 0.0
+        var sumY = 0.0
+        var sumXY = 0.0
+        var sumXX = 0.0
+        for ((x, y) in samples) {
+            sumX += x
+            sumY += y
+            sumXY += x * y
+            sumXX += x * x
+        }
+        val n = samples.size.toDouble()
+        // The variance term, which is zero exactly when every point shares one
+        // timestamp. Tested with `<=` rather than `==`: a sum of squares can only
+        // reach zero from rounding as well, and a slope fitted against no time axis
+        // is not a number worth returning.
+        val denominator = n * sumXX - sumX * sumX
+        if (denominator <= 0.0) return null
+        return ((n * sumXY - sumX * sumY) / denominator).toFloat()
     }
 
     /** Rate classification used to write heating/cooling events. */
@@ -141,8 +176,13 @@ object HistoryMath {
         return largest
     }
 
-    /** Rounded percentage change helper for the charging summary. */
-    fun percentChange(from: Int?, to: Int?): Int? {
+    /**
+     * Change in **percentage points** between two battery levels: 70 % → 85 % is
+     * `15`, not `21.4`. This is the number the charging summary wants (a charge
+     * rate over level), and it is deliberately not a relative percentage — no
+     * rounding is applied here because the caller formats the value for display.
+     */
+    fun percentPointChange(from: Int?, to: Int?): Int? {
         if (from == null || to == null) return null
         return to - from
     }

@@ -71,6 +71,23 @@ sealed interface AlertAction {
         val temperatureC: Float?,
         val thermalStatus: ThermalStatusBand?
     ) : AlertAction
+
+    /**
+     * The condition stopped being an alert, but the recovery threshold has not
+     * been confirmed yet. The caller must take the ended alert's notification out
+     * of the shade: it describes a state the engine has already left, and leaving
+     * a high-priority warning visible through the whole recovery phase would be
+     * reporting an alert that is no longer raised.
+     *
+     * No replacement notification is posted — the "back in range" message belongs
+     * to [Cleared], and a second notification per recovery would train the user to
+     * ignore this channel.
+     */
+    data class AlertEnded(
+        val previousLevel: AlertLevel,
+        val temperatureC: Float?,
+        val thermalStatus: ThermalStatusBand?
+    ) : AlertAction
 }
 
 data class AlertEvaluation(
@@ -91,7 +108,9 @@ data class AlertEvaluation(
  *    recovery threshold is reached. A critical condition first steps down to
  *    WARNING when it is still in the warning range, or to RECOVERY when it has
  *    cooled below that range; RECOVERY must reach the warning recovery threshold
- *    before returning to NORMAL.
+ *    before returning to NORMAL. Entering RECOVERY emits [AlertAction.AlertEnded]
+ *    so the visible alert notification does not outlive the condition that raised
+ *    it; the "back in range" notification still waits for NORMAL.
  *  - **Cooldown applies to notifications, not to state**: while escalated, a
  *    repeat notification is allowed only after the cooldown expires. Escalations
  *    always notify — a cooldown must never swallow a critical transition.
@@ -225,6 +244,13 @@ object AlertEngine {
                 // Reset severity so a new warning/critical escalation notifies
                 // immediately if the temperature rises again.
                 lastNotifiedLevel = AlertLevel.NORMAL
+                // Only when this evaluation *entered* recovery: an alert was
+                // visible and is now over. Staying in recovery is not a new fact.
+                val enteredRecoveryFromAlert =
+                    previous.level == AlertLevel.WARNING || previous.level == AlertLevel.CRITICAL
+                if (enteredRecoveryFromAlert) {
+                    actions += AlertAction.AlertEnded(previous.level, temperature, status)
+                }
             }
 
             AlertLevel.WARNING, AlertLevel.CRITICAL -> {

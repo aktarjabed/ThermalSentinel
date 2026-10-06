@@ -65,7 +65,12 @@ class AlertEngineTest {
             t0 + minute
         )
         assertEquals(AlertLevel.RECOVERY, recovering.state.level)
-        assertTrue(recovering.actions.isEmpty())
+        // The alert is over even though recovery is not confirmed: the engine says
+        // so, instead of leaving a critical notification on screen.
+        val ended = recovering.actions.filterIsInstance<AlertAction.AlertEnded>().single()
+        assertEquals(AlertLevel.CRITICAL, ended.previousLevel)
+        assertTrue(recovering.actions.filterIsInstance<AlertAction.Notify>().isEmpty())
+        assertTrue(recovering.actions.filterIsInstance<AlertAction.Cleared>().isEmpty())
 
         val cleared = AlertEngine.evaluate(
             recovering.state,
@@ -131,7 +136,9 @@ class AlertEngineTest {
 
         val recovering = AlertEngine.evaluate(previous, rules, input(temperatureC = 38f), t0 + 5 * minute)
         assertEquals(AlertLevel.RECOVERY, recovering.state.level)
-        assertTrue(recovering.actions.isEmpty())
+        val ended = recovering.actions.filterIsInstance<AlertAction.AlertEnded>().single()
+        assertEquals(AlertLevel.WARNING, ended.previousLevel)
+        assertEquals(38f, ended.temperatureC!!, 0.001f)
 
         val evaluation = AlertEngine.evaluate(
             recovering.state,
@@ -143,6 +150,28 @@ class AlertEngineTest {
         assertEquals(AlertLevel.NORMAL, evaluation.state.lastNotifiedLevel)
         val cleared = evaluation.actions.filterIsInstance<AlertAction.Cleared>().single()
         assertEquals(AlertLevel.RECOVERY, cleared.previousLevel)
+    }
+
+    @Test
+    fun endOfAlertIsAnnouncedOnceAndNotRepeatedWhileRecoveryHolds() {
+        val warning = AlertEngine.evaluate(AlertState(), rules, input(temperatureC = 44f), t0)
+        assertEquals(AlertLevel.WARNING, warning.state.level)
+
+        val recovering = AlertEngine.evaluate(warning.state, rules, input(temperatureC = 38f), t0 + minute)
+        assertEquals(AlertLevel.RECOVERY, recovering.state.level)
+        assertEquals(1, recovering.actions.filterIsInstance<AlertAction.AlertEnded>().size)
+
+        // Still below the warning threshold but above the recovery point, so the
+        // state holds in RECOVERY. Nothing may be re-announced: the alert ended one
+        // evaluation ago, and "back in range" waits for NORMAL.
+        val stillRecovering = AlertEngine.evaluate(
+            recovering.state,
+            rules,
+            input(temperatureC = 39.5f),
+            t0 + 2 * minute
+        )
+        assertEquals(AlertLevel.RECOVERY, stillRecovering.state.level)
+        assertTrue(stillRecovering.actions.isEmpty())
     }
 
     @Test

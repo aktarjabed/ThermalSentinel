@@ -60,10 +60,22 @@ class ThermalCollector(private val context: Context) {
         )
     }
 
+    /**
+     * Stops listening and **retires the last status**. The collector is
+     * process-scoped and shared with Diagnostics, so a value left behind here
+     * outlives the session that produced it: the next reader would show a status
+     * from a stopped session as though the platform had just reported it. Absence
+     * with a reason is the honest replacement.
+     *
+     * The headroom cache is deliberately *not* cleared. It is a throttle cache,
+     * Diagnostics labels it as the "most recent reading", and clearing it would
+     * only cost the next reader its 10-second platform budget.
+     */
     fun stop() {
         if (!registered) return
         runCatching { powerManager?.removeThermalStatusListener(listener) }
         registered = false
+        _thermalStatus.value = Reading.Absent(AbsenceReason.SAMPLING_STOPPED)
     }
 
     /**

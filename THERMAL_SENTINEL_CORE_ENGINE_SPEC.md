@@ -173,6 +173,21 @@ outlive its retention window by less than one bucket; the benefit is that a buck
 be compacted twice from partial data and silently overwrite its own first contribution.
 Gaps are never interpolated: an hourly bucket with no samples stores a null average.
 
+### 4.4 Events derived while storing a sample
+
+The heating/cooling detector lives in `ThermalHistoryRepository.record(sample)`, not in the
+sampling loop: `record()` inserts the row and then derives charging-session transitions,
+`HEATING_EVENT` / `COOLING_EVENT` (`HistoryMath.classifyRate` over the window, a
+least-squares slope rather than an endpoint difference, so one noisy sample at either end
+cannot invent a trend), and `GAP_DETECTED`. Keeping derivation with the write is what makes
+the timeline agree with the sample table even when the UI or a widget is the reader.
+
+A rate verdict is deduplicated: `detectRateEvent` skips writing when the same verdict was
+recorded within `RATE_EVENT_DEDUPE_MILLIS`, because at a 15 s charging cadence an unfiltered
+classifier would append a "heating" event per sample and bury the timeline. Only
+`AlertAction.Notify` and `.Cleared` write alert rows; `.AlertEnded` deliberately writes
+neither a row nor a notification.
+
 ---
 
 ## 5. Collectors
@@ -264,6 +279,12 @@ straight from `NORMAL` to `CRITICAL` when one measurement crosses the critical t
 * **Recovery is not a notification level.** Entering it stops reminder notifications and
   resets the escalation baseline; a new warning/critical condition notifies immediately.
   "Back in range" is emitted only when recovery is confirmed, outside cooldown.
+* **But recovery does end the alert that is already visible.** Entering `RECOVERY` from
+  `WARNING` or `CRITICAL` emits `AlertEnded`, which cancels notification 4102 without
+  posting anything in its place: the alert describes a state the engine has left, and a
+  high-priority warning sitting in the shade for the whole recovery phase would be
+  reporting something that is no longer true. Staying in `RECOVERY` emits nothing, so the
+  cancellation is never repeated as a reminder.
 * **Cleared is always announced**, deliberately outside the cooldown: suppressing "back in
   range" would leave a user staring at a stale warning.
 * **Absent data holds the state.** Missing temperature cannot clear an active temperature
@@ -286,6 +307,11 @@ catches `SecurityException`. When notifications are blocked the notification is 
 **monitoring continues** — the platform still lists the foreground service, and Diagnostics
 says the notification is hidden. The alert text quotes the threshold that actually fired.
 
+Because the API 33+ permission is not granted at install time, `MainActivity` requests it
+once per install from the app's first composed frame (`NotificationPermissionGate`); the
+one-shot flag lives in a shared preference, not in the UI-preferences contract. Without the
+request the engine would sample, alert and record history while showing nothing at all.
+
 ---
 
 ## 8. Service lifecycle
@@ -295,9 +321,10 @@ says the notification is hidden. The alert text quotes the threshold that actual
 | Foreground service type | `specialUse` (+ `PROPERTY_SPECIAL_USE_FGS_SUBTYPE`) | Target SDK is 36. The service continuously reads local battery/thermal telemetry; it is neither `dataSync` (transfer/import/export) nor a health/fitness session. Android 14+ requires a declared type and matching permission; Android 15+ caps `dataSync` at 6 h/24 h for apps targeting API 35+. `specialUse` is the documented category for a valid use case not covered by another type, and Play Console review requires a written subtype justification. Revalidate if the monitoring use case changes. |
 | Return value | `START_NOT_STICKY` | A sticky restart can be rejected on API 31+ and risks a crash loop; a silent restart would also make the app's own "monitoring stopped" reporting untrue. |
 | Where monitoring may start | A visible screen (`MonitoringController.start()`), or `resumeIfRequested()` from a visible screen | Foreground-service starts from the background are rejected on API 31+. `Application.onCreate` deliberately never starts the service. |
-| Stop reasons | `USER_REQUEST`, `PLATFORM_STOPPED`, `PERMISSION_REVOKED`, `UNKNOWN` | Written from `onDestroy` on the *application* scope, which outlives the service, and only when the persisted intent is still "on" — so an OEM kill is recorded and shown, never disguised as the user's choice. |
-| Notification-suppressed path | Monitoring still runs | The user turning off notifications must not silently disable monitoring. |
-| Widget updates | Throttled to 1/min from the sampling loop; one-hour fallback refresh | Sampling can be 5 s; rebuilding a widget that fast would cost more battery than the monitoring. |
+| Writer of the monitoring intent | `MonitoringController` only, on both paths | `start()` persists `monitoring_enabled = true` *before* asking for the service and rolls it back if the platform refuses; `stop()` persists `false` before `stopService`. The service writes session bookkeeping (`lastStartedAt`, session count) and never the intent: with two writers, a stop landing between the service's launch and its start-write would be followed by that write and leave monitoring "wanted" with nothing running, so the next launch would silently restart what the user had just switched off. `onDestroy` then reads the intent to decide the stop reason. |
+| Stop reasons | `USER_REQUEST`, `PLATFORM_STOPPED`, `PERMISSION_REVOKED`, `UNKNOWN` | Written from `onDestroy` on the *application* scope, which outlives the service, and only when the persisted intent is still "on" — so an OEM kill is recorded and shown, never disguised as the user's choice. The stop path awaits its DataStore write before `stopService`, and that read is served from the value the transaction committed. |
+| Notification-suppressed path | Monitoring still runs | The user turning off notifications must not silently disable monitoring. The permission itself is requested at runtime once per install (§7.3). |
+| Widget updates | Throttled to 1/min from the sampling loop on `elapsedRealtime`; one-hour fallback refresh | Sampling can be 5 s; rebuilding a widget that fast would cost more battery than the monitoring. A wall-clock throttle could be frozen for hours by the user setting the clock backwards, which is not a throttle at all. |
 
 Failure states and what the user sees:
 
@@ -337,7 +364,9 @@ genuinely cannot answer, and is not a soft failure.
 * The window is clamped to raw retention (7 days) and `truncatedToRetention` is reported so
   a 30-day request never silently returns 7 days as if it were complete.
 * Written to the app cache and shared through `FileProvider`
-  (`${applicationId}.engine.files`). Previous exports are cleared on request.
+  (`${applicationId}.engine.files`). Before each export the directory is pruned to the
+  newest file, so the cache is bounded without deleting something a share sheet may still
+  be reading.
 
 ---
 
@@ -359,7 +388,7 @@ JVM unit tests (run by `./gradlew testDebugUnitTest` in CI):
 |---|---|---|
 | Domain availability | `ReadingTest` | `Present`/`Absent` round trip, `valueOrNull`, `absenceReason`, display labels for every reason. |
 | Plausibility | `PlatformValuesTest` | `MIN_VALUE` → unsupported; zero temperature/current/cycle count retained when valid; voltage bounds; `NaN` headroom → unsupported; negative headroom → 0; unknown status level → `UNKNOWN`; deci-°C conversions round-trip. |
-| Alert engine | `AlertEngineTest` | escalation NORMAL→WARNING→CRITICAL; jump to CRITICAL; explicit RECOVERY phase and confirmation; independent recovery thresholds; absent-data hold; cooldown suppresses repeats but not escalation; reminder after cooldown; cleared always emitted; status-band mapping; evaluation counter and explanation text. |
+| Alert engine | `AlertEngineTest` | escalation NORMAL→WARNING→CRITICAL; jump to CRITICAL; explicit RECOVERY phase and confirmation; independent recovery thresholds; absent-data hold; cooldown suppresses repeats but not escalation; reminder after cooldown; cleared always emitted; entering recovery ends the visible alert exactly once and holding recovery announces nothing; status-band mapping; evaluation counter and explanation text. |
 | Alert rules | `ThermalAlertRulesTest` | every `RuleViolation`; `clamped()` never leaves an invalid set; charging rule threshold selection and recovery. |
 | Sampling policy | `SamplingPolicyTest` | priority order of the eight branches, recovery cadence, reason strings, 5 s floor. |
 | Headroom API cadence | `ThermalHeadroomReadLimiterTest` | first read, 10 s minimum interval, exact boundary, backwards-clock fail-closed behavior. |

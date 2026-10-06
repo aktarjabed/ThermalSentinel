@@ -1,11 +1,16 @@
 package com.thermalsentinel.ui
 
 import com.thermalsentinel.R
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
@@ -34,14 +39,19 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -143,8 +153,12 @@ class MainActivity : ComponentActivity() {
                 onDispose { }
             }
 
+            // Part of the first real frame rather than a settings screen: see
+            // NotificationPermissionGate.
+            NotificationPermissionGate()
+
             ThermalSentinelTheme(preferences = prefs) {
-                ThermalSentinelApp(
+                ThermalSentinelRoot(
                     preferences = prefs,
                     onThemeChanged = { uiPreferencesViewModel.setThemeMode(ThemeMode.fromStorage(it)) },
                     onDynamicColorChanged = { uiPreferencesViewModel.setDynamicColor(it) },
@@ -156,9 +170,75 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Requests `POST_NOTIFICATIONS` once per install.
+ *
+ * This exists because the engine has no other way to be heard. On API 33+ the
+ * permission is not granted at install time, and nothing else in the app asks for
+ * it: the publisher checks it and stays quiet, so a fresh install would sample,
+ * evaluate alerts, write history — and show no alert and no ongoing notification
+ * at all, forever, unless the user happened to find the app's entry in system
+ * settings. The failure is silent by construction, so the ask cannot be left to a
+ * screen the user might never open.
+ *
+ * The one-shot flag is a shared preference rather than another UI preference:
+ * these keys are a tested storage contract for screens, and this flag is not part
+ * of what any screen renders. Asking once also matches the platform, which stops
+ * showing the dialog after the second denial.
+ */
+@Composable
+private fun NotificationPermissionGate() {
+    if (Build.VERSION.SDK_INT < 33) return
+    val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        // Nothing is recorded from the answer, deliberately. Whether a notification
+        // posted now would be visible is read from the platform by the publisher on
+        // every post and measured by Diagnostics on every run; a copy cached here
+        // could only ever disagree with them. The flag that prevents a second ask is
+        // written before the request goes out.
+    }
+    LaunchedEffect(Unit) {
+        if (isNotificationPermissionGranted(context)) return@LaunchedEffect
+        if (hasBeenAskedAboutNotificationPermission(context)) return@LaunchedEffect
+        // Marked before launching, so a refusal followed by a relaunch does not ask
+        // again.
+        markNotificationPermissionPrompted(context)
+        launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}
+
+private const val NOTIFICATION_PERMISSION_PREFS = "notification_permission_prompt"
+private const val KEY_NOTIFICATION_PROMPTED = "prompted"
+
+private fun notificationPromptSharedPreferences(context: Context) =
+    context.getSharedPreferences(NOTIFICATION_PERMISSION_PREFS, Context.MODE_PRIVATE)
+
+private fun isNotificationPermissionGranted(context: Context): Boolean =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+
+private fun hasBeenAskedAboutNotificationPermission(context: Context): Boolean =
+    notificationPromptSharedPreferences(context).getBoolean(KEY_NOTIFICATION_PROMPTED, false)
+
+private fun markNotificationPermissionPrompted(context: Context) {
+    notificationPromptSharedPreferences(context).edit {
+        putBoolean(KEY_NOTIFICATION_PROMPTED, true)
+    }
+}
+
+/**
+ * The root of the app's own composition.
+ *
+ * Named for what it is rather than reusing `ThermalSentinelApp` — the
+ * `Application` subclass in `com.thermalsentinel`. Two types with the same name in
+ * one app read badly in every stack trace and every review, and only one of them
+ * is a class.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ThermalSentinelApp(
+private fun ThermalSentinelRoot(
     preferences: UiPreferences,
     onThemeChanged: (String) -> Unit,
     onDynamicColorChanged: (Boolean) -> Unit,

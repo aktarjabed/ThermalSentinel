@@ -123,6 +123,12 @@ class MonitoringCoordinator(
 
     private suspend fun runLoop() {
         restorePersistedState()
+        // The service must call startForeground within five seconds, so the very
+        // first ongoing notification is built before any suspending read and
+        // cannot know the persisted alert level. Refresh it as soon as that state
+        // is restored, so an alert that survived a service restart is not shown as
+        // an unremarkable reading for one whole sampling interval.
+        refreshMonitoringNotification(lastStoredSample ?: history.latestSample.value)
         // A sample is taken immediately on start so the first screen the user
         // sees after enabling monitoring is never empty.
         sampleNow(SampleReason.SERVICE_START, SamplingPolicy.NORMAL_INTERVAL_MS)
@@ -189,11 +195,24 @@ class MonitoringCoordinator(
                     )
                     publisher.publishClearedNotification(action, rules)
                 }
+
+                is AlertAction.AlertEnded -> {
+                    // Deliberately no notification and no timeline row: the alert
+                    // simply stopped being true, and ALERT_CLEARED is written when
+                    // recovery is confirmed at NORMAL. What must not happen is the
+                    // high-priority alert staying in the shade through recovery.
+                    publisher.cancelAlertNotification()
+                }
             }
         }
     }
 
-    private fun refreshMonitoringNotification(sample: DeviceSample) {
+    /**
+     * [sample] is nullable because the first refresh of a session happens before
+     * any sample has been taken in it; the publisher renders that as "waiting for
+     * a reading" rather than as a zero.
+     */
+    private fun refreshMonitoringNotification(sample: DeviceSample?) {
         val notification = publisher.buildMonitoringNotification(
             sample = sample,
             alertLevel = _alertState.value.level,

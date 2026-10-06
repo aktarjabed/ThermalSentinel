@@ -67,7 +67,11 @@ class ThermalMonitorService : Service() {
             coordinator = created
             serviceScope.launch {
                 val now = System.currentTimeMillis()
-                graph.settings.recordMonitoringStarted(now)
+                // Session facts only. The monitoring *intent* was already persisted
+                // by MonitoringController.start() before this service existed, so a
+                // stop issued while this coroutine was queued cannot be undone by a
+                // late start write landing after it.
+                graph.settings.recordSessionStarted(now)
                 graph.history.recordEvent(
                     timestampMillis = now,
                     type = ThermalEventType.MONITORING_STARTED,
@@ -110,6 +114,11 @@ class ThermalMonitorService : Service() {
 
     private fun startAsForeground() {
         val sample = graph.history.latestSample.value
+        // Android requires startForeground within five seconds of the service being
+        // started, so this notification is built from cached state and with no
+        // alert annotation at all — it claims nothing about the alert level. The
+        // coordinator refreshes it with the persisted level as soon as that state
+        // has been read back, which is the first thing its loop does.
         val notification = graph.notifications.buildMonitoringNotification(
             sample = sample,
             alertLevel = AlertLevel.NORMAL,
