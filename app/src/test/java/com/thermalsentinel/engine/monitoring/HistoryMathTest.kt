@@ -143,18 +143,36 @@ class HistoryMathTest {
 
     @Test
     fun riseRateIgnoresSamplesOutsideTheWindow() {
-        // A reading from well before the window must not anchor the slope: only the
-        // three in-window points describe the last three minutes. Fitting all four
-        // would answer 0.82 °C/min instead of 0.5.
+        // One reading from well before the window must not anchor the slope: only
+        // the four in-window points describe the last ten minutes. Fitting all five
+        // would answer 0.62 °C/min instead of 0.5 — a stale sample would be read
+        // as heat the device is not producing right now.
         val points = listOf(
             point(0, 20f),
-            point(30 * 60_000L, 45f),
-            point(31 * 60_000L, 45.5f),
-            point(32 * 60_000L, 46f)
+            point(40 * 60_000L, 45f),
+            point(41 * 60_000L, 45.5f),
+            point(42 * 60_000L, 46f),
+            point(43 * 60_000L, 46.5f)
         )
 
-        val rate = HistoryMath.riseRateCPerMinute(points, windowMillis = 180_000)!!
+        val rate = HistoryMath.riseRateCPerMinute(points, windowMillis = 600_000)!!
         assertEquals(0.5f, rate, 0.001f)
+    }
+
+    @Test
+    fun riseRateRefusesAWindowThatSpansLessThanThreeMinutes() {
+        // Enough points, but no elapsed time to call a rate: three readings inside
+        // a two-minute stretch. The evidence gate is a span, not a row count,
+        // because a fast sampling cadence can supply any number of rows in seconds.
+        val points = listOf(
+            point(0, 45f),
+            point(30_000, 45.5f),
+            point(60_000, 46f),
+            point(90_000, 46.5f),
+            point(120_000, 47f)
+        )
+
+        assertNull(HistoryMath.riseRateCPerMinute(points, windowMillis = 600_000))
     }
 
     @Test

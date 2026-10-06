@@ -123,7 +123,7 @@ Per-screen status is in [`UI_FEATURE_MATRIX.md`](UI_FEATURE_MATRIX.md).
 
 ### Tests
 
-**103 JVM unit tests** (15 UI contract tests + 88 engine tests):
+**104 JVM unit tests** (15 UI contract tests + 89 engine tests):
 
 | Class | Tests | Covers |
 |---|---|---|
@@ -132,7 +132,7 @@ Per-screen status is in [`UI_FEATURE_MATRIX.md`](UI_FEATURE_MATRIX.md).
 | `PlatformValuesTest` | 14 | Unsupported sentinels, valid zero temperature/current/cycle counts, voltage and percent bounds, `NaN` headroom, unknown status levels |
 | `SamplingPolicyTest` | 12 | Branch priority, charging vs. low battery, recovery cadence, unknown status is not elevated, 5 s floor |
 | `ThermalHeadroomReadLimiterTest` | 4 | First read, 10 s minimum interval, exact boundary, backwards-clock fail-closed behavior |
-| `HistoryMathTest` | 12 | Segment splitting, holes, min/max/avg over present values only, threshold time, least-squares rate fit (interior points used, out-of-window samples ignored, no time axis → no rate) |
+| `HistoryMathTest` | 13 | Segment splitting, holes, min/max/avg over present values only, threshold time, least-squares rate fit (interior points used, out-of-window samples ignored, no time axis or a span under 3 min → no rate) |
 | `ReadingTest` | 6 | `Present`/`Absent` semantics, covariance, labels |
 | `ThermalCsvTest` | 6 | Header contract, empty fields for absent values, locale-independent decimals, quoting, timestamps |
 | `SampleMappersTest` | 3 | Real zero temperature, explicit absent-value round-trip, enums and sampling metadata |
