@@ -7,6 +7,8 @@ import com.thermalsentinel.R
 import com.thermalsentinel.engine.data.ThermalHistoryRepository
 import com.thermalsentinel.engine.domain.ThermalFormatting
 import com.thermalsentinel.engine.monitoring.RetentionPolicy
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 
@@ -54,7 +56,10 @@ class ThermalExportService(
         val effectiveWindow = windowMillis.coerceAtMost(rawRetention)
         val from = now - effectiveWindow
 
-        val samples = history.samplesSince(from)
+        // The repository's read is a suspend Room query, but the entity-to-domain
+        // mapping after it runs on the caller's dispatcher, and for a full export
+        // that is tens of thousands of objects.
+        val samples = withContext(Dispatchers.IO) { history.samplesSince(from) }
         if (samples.isEmpty()) {
             return ExportOutcome.Empty(
                 "No samples are stored in the last ${ThermalFormatting.duration(effectiveWindow)}, so there is " +
@@ -62,24 +67,35 @@ class ThermalExportService(
             )
         }
 
-        val csv = ThermalCsv.render(samples.map(CsvRow::from))
+        // Rendering and file IO run on the IO dispatcher. This is called from a
+        // ViewModel scope, which is `Main.immediate`, and a full raw-retention
+        // export is roughly twenty thousand rows: building the text and writing it
+        // to storage on the main thread is an ANR waiting for a slow device, and
+        // nothing here needs the UI thread until the result is published.
+        val csv = withContext(Dispatchers.IO) { ThermalCsv.render(samples.map(CsvRow::from)) }
 
         return try {
-            val directory = File(context.cacheDir, DIRECTORY)
-            if (!directory.exists() && !directory.mkdirs()) {
-                return ExportOutcome.Failure("The export directory could not be created.")
+            withContext(Dispatchers.IO) {
+                val directory = File(context.cacheDir, DIRECTORY)
+                if (directory.exists() || directory.mkdirs()) {
+                    // Trim before writing, so the file that is about to be shared is
+                    // never the one that gets collected.
+                    pruneOldExports()
+                    val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmm")
+                    val file = File(directory, "thermal-history-$label.csv")
+                    file.writeText(csv)
+                    ExportOutcome.Success(
+                        ExportResult(
+                            file = file,
+                            rowCount = samples.size,
+                            windowMillis = effectiveWindow,
+                            truncatedToRetention = windowMillis > rawRetention
+                        )
+                    )
+                } else {
+                    ExportOutcome.Failure("The export directory could not be created.")
+                }
             }
-            val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmm")
-            val file = File(directory, "thermal-history-$label.csv")
-            file.writeText(csv)
-            ExportOutcome.Success(
-                ExportResult(
-                    file = file,
-                    rowCount = samples.size,
-                    windowMillis = effectiveWindow,
-                    truncatedToRetention = windowMillis > rawRetention
-                )
-            )
         } catch (io: IOException) {
             ExportOutcome.Failure("Writing the export failed: ${io.message ?: "unknown error"}")
         }
@@ -106,12 +122,23 @@ class ThermalExportService(
         }
     }
 
-    /** Removes previous exports so the cache cannot grow without bound. Returns files deleted. */
-    fun purgeExports(): Int {
+    /**
+     * Keeps the export directory bounded, and returns how many files were removed.
+     *
+     * The newest [keep] files survive: a share sheet that has only just handed a
+     * file to another app must not have it deleted out from under the reader. A
+     * device that exports once a day therefore holds a small, fixed number of
+     * files instead of one permanent file per export, because the timestamp in the
+     * name makes every export a new file rather than an overwrite.
+     */
+    fun pruneOldExports(keep: Int = 1): Int {
         val directory = File(context.cacheDir, DIRECTORY)
-        val files = directory.listFiles() ?: return 0
+        val stale = directory.listFiles()
+            ?.sortedByDescending { it.lastModified() }
+            ?.drop(keep.coerceAtLeast(0))
+            ?: return 0
         var removed = 0
-        files.forEach { file -> if (file.delete()) removed++ }
+        stale.forEach { file -> if (file.delete()) removed++ }
         return removed
     }
 

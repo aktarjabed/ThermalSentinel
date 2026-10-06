@@ -69,17 +69,25 @@ object SamplingPolicy {
             )
         }
 
-        val statusLevel = context.thermalStatus?.takeIf { it.isPlatformReported }?.androidLevel
+        // The band, not its integer level, is what the guards below test. Only a
+        // band the platform actually reported can change the cadence: UNKNOWN is
+        // "no information" and must never accelerate or relax sampling on its own.
+        // Holding it in a local also keeps the explanation strings reading the very
+        // value that was null-checked, instead of relying on a smart cast that a
+        // later refactor of the condition could silently invalidate.
+        val reportedStatus = context.thermalStatus?.takeIf { it.isPlatformReported }
 
         // SEVERE means the platform itself has started throttling, which is the
         // point at which five-second sampling stops being over-sampling. The
         // threshold is not CRITICAL: waiting until CRITICAL would miss the
         // throttling ramp that the history is most useful for.
-        if (statusLevel != null && statusLevel >= ThermalStatusBand.SEVERE.androidLevel) {
+        if (reportedStatus != null &&
+            reportedStatus.androidLevel >= ThermalStatusBand.SEVERE.androidLevel
+        ) {
             return SamplingDecision(
                 EVENT_INTERVAL_MS,
                 SampleReason.SCHEDULED_EVENT,
-                "Android reports thermal status ${context.thermalStatus.label} or worse."
+                "Android reports thermal status ${reportedStatus.label} or worse."
             )
         }
 
@@ -96,11 +104,13 @@ object SamplingPolicy {
             )
         }
 
-        if (statusLevel != null && statusLevel >= ThermalStatusBand.MODERATE.androidLevel) {
+        if (reportedStatus != null &&
+            reportedStatus.androidLevel >= ThermalStatusBand.MODERATE.androidLevel
+        ) {
             return SamplingDecision(
                 ELEVATED_INTERVAL_MS,
                 SampleReason.SCHEDULED_EVENT,
-                "Android reports thermal status ${context.thermalStatus.label}."
+                "Android reports thermal status ${reportedStatus.label}."
             )
         }
 

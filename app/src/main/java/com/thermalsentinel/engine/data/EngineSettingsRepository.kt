@@ -118,8 +118,16 @@ class EngineSettingsRepository(private val context: Context) {
         prefs[Keys.monitoringEnabled] = enabled
     }
 
-    suspend fun recordMonitoringStarted(nowMillis: Long) = editSafely { prefs ->
-        prefs[Keys.monitoringEnabled] = true
+    /**
+     * Session bookkeeping, written by the service when it comes up.
+     *
+     * Note what is *not* here: `monitoring_enabled`. The user's intent is written
+     * only by `MonitoringController`, on both the start and the stop path, so a
+     * start recorded by the service can never land after a stop and re-arm
+     * monitoring the user just switched off. This transaction only ever writes
+     * facts about the session that has actually begun.
+     */
+    suspend fun recordSessionStarted(nowMillis: Long) = editSafely { prefs ->
         prefs[Keys.lastStartedAt] = nowMillis
         prefs[Keys.sessionCount] = (prefs[Keys.sessionCount] ?: 0) + 1
     }

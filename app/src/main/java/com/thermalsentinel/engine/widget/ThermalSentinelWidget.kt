@@ -157,13 +157,25 @@ object WidgetUpdater {
 
     const val MIN_UPDATE_INTERVAL_MILLIS = 60_000L
 
+    /**
+     * Null means "has never updated", which is not the same statement as "updated
+     * at time zero" — a zero here would silently swallow the first update after a
+     * boot that happened within the throttle window.
+     */
     @Volatile
-    private var lastUpdateAtMillis = 0L
+    private var lastUpdateAtElapsedRealtime: Long? = null
 
+    /**
+     * Throttled on `elapsedRealtime`, not the wall clock. Setting the device clock
+     * backwards must not freeze widget updates until the clock catches up; the
+     * headroom limiter makes the same choice for the same reason, and a throttle
+     * built on a clock the user controls is not a throttle.
+     */
     suspend fun onSampleStored(context: Context) {
-        val now = System.currentTimeMillis()
-        if (now - lastUpdateAtMillis < MIN_UPDATE_INTERVAL_MILLIS) return
-        lastUpdateAtMillis = now
+        val now = android.os.SystemClock.elapsedRealtime()
+        val previous = lastUpdateAtElapsedRealtime
+        if (previous != null && now - previous < MIN_UPDATE_INTERVAL_MILLIS) return
+        lastUpdateAtElapsedRealtime = now
         runCatching { ThermalSentinelWidget().updateAll(context) }
     }
 }

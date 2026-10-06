@@ -118,13 +118,82 @@ class HistoryMathTest {
     }
 
     @Test
-    fun largestGapAndPercentChange() {
+    fun riseRateFitsEveryPointInTheWindowNotJustTheEndpoints() {
+        // Same two endpoints (30 °C → 33 °C over three minutes), different
+        // interior evidence. An endpoint slope answers 1.0 for both; a fit over
+        // the window can tell a mid-window spike from a genuine late climb.
+        val spikeInTheMiddle = listOf(
+            point(0, 30f), point(60_000, 34f), point(120_000, 30f), point(180_000, 33f)
+        )
+        val climbAtTheEnd = listOf(
+            point(0, 30f), point(60_000, 30f), point(120_000, 34f), point(180_000, 33f)
+        )
+
+        assertEquals(
+            0.5f,
+            HistoryMath.riseRateCPerMinute(spikeInTheMiddle, windowMillis = 180_000)!!,
+            0.001f
+        )
+        assertEquals(
+            1.3f,
+            HistoryMath.riseRateCPerMinute(climbAtTheEnd, windowMillis = 180_000)!!,
+            0.001f
+        )
+    }
+
+    @Test
+    fun riseRateIgnoresSamplesOutsideTheWindow() {
+        // One reading from well before the window must not anchor the slope: only
+        // the four in-window points describe the last ten minutes. Fitting all five
+        // would answer 0.62 °C/min instead of 0.5 — a stale sample would be read
+        // as heat the device is not producing right now.
+        val points = listOf(
+            point(0, 20f),
+            point(40 * 60_000L, 45f),
+            point(41 * 60_000L, 45.5f),
+            point(42 * 60_000L, 46f),
+            point(43 * 60_000L, 46.5f)
+        )
+
+        val rate = HistoryMath.riseRateCPerMinute(points, windowMillis = 600_000)!!
+        assertEquals(0.5f, rate, 0.001f)
+    }
+
+    @Test
+    fun riseRateRefusesAWindowThatSpansLessThanThreeMinutes() {
+        // Enough points, but no elapsed time to call a rate: three readings inside
+        // a two-minute stretch. The evidence gate is a span, not a row count,
+        // because a fast sampling cadence can supply any number of rows in seconds.
+        val points = listOf(
+            point(0, 45f),
+            point(30_000, 45.5f),
+            point(60_000, 46f),
+            point(90_000, 46.5f),
+            point(120_000, 47f)
+        )
+
+        assertNull(HistoryMath.riseRateCPerMinute(points, windowMillis = 600_000))
+    }
+
+    @Test
+    fun riseRateReturnsNullWhenTheWindowHasNoTimeSpan() {
+        // Three readings at the same instant: enough points, no time axis.
+        val sameInstant = listOf(
+            point(60_000, 30f), point(60_000, 31f), point(60_000, 32f)
+        )
+        assertNull(HistoryMath.riseRateCPerMinute(sameInstant, windowMillis = 180_000))
+    }
+
+    @Test
+    fun largestGapAndPercentPointChange() {
         val points = listOf(point(0, 35f), point(60_000, 36f), point(600_000, 37f))
         assertEquals(540_000L, HistoryMath.largestGapMillis(points))
         assertEquals(0L, HistoryMath.largestGapMillis(listOf(point(0, 35f))))
 
-        assertEquals(15, HistoryMath.percentChange(70, 85))
-        assertNull(HistoryMath.percentChange(null, 85))
-        assertNull(HistoryMath.percentChange(70, null))
+        // Percentage *points*, not a relative percentage: 70 → 85 is +15.
+        assertEquals(15, HistoryMath.percentPointChange(70, 85))
+        assertEquals(-4, HistoryMath.percentPointChange(85, 81))
+        assertNull(HistoryMath.percentPointChange(null, 85))
+        assertNull(HistoryMath.percentPointChange(70, null))
     }
 }
