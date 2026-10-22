@@ -166,3 +166,29 @@ older Gradle would otherwise try to apply AGP) and copy the files over.
 - Confirm the `androidx.core:core-splashscreen` pin (1.0.1) before release.
 - Finalise `applicationId` before the first Play upload (it is intentionally
   unchanged so the installed identity does not move in this phase).
+
+
+## Quick Settings tile
+
+A protected Android Quick Settings tile is now available for starting and stopping
+monitoring without navigating through the app. It delegates to the same
+`MonitoringController` as the Dashboard and reports the live service state rather
+than treating a saved monitoring preference as proof that the service is alive.
+Android still controls whether the tile is available and whether a foreground
+service start is allowed; if a start is rejected, the tile shows a message and the
+user can open the app to retry.
+
+### Validate on a device
+
+1. Install the debug build on Android 12+.
+2. Open Quick Settings, choose **Edit**, and add **Thermal Sentinel**.
+3. Tap once and confirm the ongoing monitoring notification appears and the tile
+   changes to **Monitoring active**.
+4. Tap again and confirm the service stops and the tile returns to **Monitoring stopped**.
+5. Deny notification permission, repeat the test, and verify that the app explains
+   notification visibility separately from monitoring state.
+6. Repeat after force-stopping the app and after a device reboot. The tile must not
+   claim monitoring is active when the service is not running.
+
+Device/OEM validation is still required; CI cannot prove Quick Settings behavior or
+foreground-service policy on every Android build.
