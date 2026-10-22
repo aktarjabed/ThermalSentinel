@@ -41,7 +41,7 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Alert engine: NORMAL / WARNING / CRITICAL / RECOVERY, hysteresis, cooldown, charging rule, platform-status bands | Implemented |
 | Alert + ongoing notifications, two channels, permission-aware, `POST_NOTIFICATIONS` requested once per install | Implemented |
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
-| CSV and versioned JSON export through the app cache and the system share sheet | Implemented |
+| CSV, versioned JSON and PDF export through the app cache and the system share sheet | Implemented |
 | Glance home-screen widget, pushed on new samples (≤1/min) | Implemented |
 | DataStore-persisted alert rules, monitoring intent and widget style | Implemented |
 | Appearance preferences (theme, dynamic colour, AMOLED, accent) | Implemented |
@@ -53,7 +53,7 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Network Protection: local VPN, per-app policy, traffic attribution | Not implemented — the screens say so; no `VpnService` exists |
 | DNS Protection: resolvers, blocklists, attribution | Not implemented |
 | Privacy Monitor, App Activity, Security Timeline, Security Scanner | Not implemented |
-| Reports: JSON, PDF, combined diagnostic bundle | Not implemented (CSV export of thermal samples is) |
+| Combined diagnostic bundle, security/privacy reports | Not implemented; thermal CSV, versioned JSON and PDF are implemented |
 | Quick Access settings intents | Rows are disabled and labelled |
 | Boot-time start of monitoring | Deliberately absent; monitoring resumes when the app is opened |
 | Brightness control, app force-stop, thermal-engine overrides | Deliberately absent, permanently |

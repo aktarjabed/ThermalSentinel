@@ -19,7 +19,7 @@ Status vocabulary:
 | Thermal Monitor | Battery temperature, platform thermal status, headroom, 24 h trend, recorded events, active rules | Live | Temperature, status and headroom come from the collectors; the chart draws raw samples and shows gaps as gaps; events are read from the local event table. |
 | Battery & Charging | Charge, voltage, current, health, cycle count, capacity level, charging sessions | Live | Unsupported platform values render their absence reason ("Unavailable on this device") rather than `0`. |
 | Alert Rules | Warning/critical thresholds, hysteresis, cooldown, charging rule, platform bands | Live | Rules are persisted in DataStore and evaluated by the running engine; invalid combinations are clamped and explained. |
-| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON + PDF export | Live | Exports contain raw samples only; PDF is paginated, JSON is schema-versioned and absent values are null. Longer ranges read compacted buckets and are labelled as averages; time above threshold is not estimated from aggregates. |
+| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON + PDF export + clear history | Live | Exports contain raw samples only; PDF is paginated, JSON is schema-versioned and absent values are null. Longer ranges read compacted buckets and are labelled as averages; time above threshold is not estimated from aggregates. |
 | Network Protection | VPN lifecycle, traffic visibility, per-app policy | UI only | No `VpnService` exists. The screen states that protection is off. |
 | Firewall Rules | Precedence, category rules, explicit override | UI only | — |
 | DNS Protection | Resolver state, blocklists, cache/attribution | UI only | No DNS engine, no `VpnService`. |
@@ -41,7 +41,7 @@ Status vocabulary:
 | Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |
 | Local history database | Live | Room v1 with a 7 d / 90 d / 400 d retention ladder; no destructive migration. |
 | Alert notifications | Live | Two channels; monitoring continues when notifications are blocked, and Diagnostics says the notification is hidden. |
-| CSV + JSON export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null. The window is clamped to raw retention and the result says so. |
+| CSV + JSON + PDF export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null; large PDFs are bounded to avoid memory exhaustion. The window is clamped to raw retention and the result says so. |
 | Cloud sync, analytics, accounts | Not present | Not implemented by design, not merely disabled. |
 
 

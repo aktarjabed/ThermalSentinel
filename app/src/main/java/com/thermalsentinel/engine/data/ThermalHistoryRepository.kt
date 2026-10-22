@@ -1,5 +1,6 @@
 package com.thermalsentinel.engine.data
 
+import androidx.room.withTransaction
 import com.thermalsentinel.engine.alert.AlertLevel
 import com.thermalsentinel.engine.alert.AlertTrigger
 import com.thermalsentinel.engine.domain.*
@@ -9,6 +10,8 @@ import com.thermalsentinel.engine.monitoring.SamplingPolicy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** What happened while storing one sample. Surfaced in Diagnostics. */
 data class RecordOutcome(
@@ -119,6 +122,7 @@ class ThermalHistoryRepository(
     private val aggregateDao = database.aggregateDao()
     private val eventDao = database.eventDao()
     private val sessionDao = database.chargingSessionDao()
+    private val historyMutex = Mutex()
 
     private val _latestSample = MutableStateFlow<DeviceSample?>(null)
 
@@ -130,18 +134,18 @@ class ThermalHistoryRepository(
 
     private var lastMaintenanceMillis = 0L
 
-    suspend fun loadLatest(): DeviceSample? {
-        val entity = sampleDao.latest() ?: return null
-        val domain = SampleMappers.toDomain(entity)
+    suspend fun loadLatest(): DeviceSample? = historyMutex.withLock {
+        val entity = sampleDao.latest()
+        val domain = entity?.let(SampleMappers::toDomain)
         _latestSample.value = domain
-        return domain
+        domain
     }
 
     /**
      * Stores one sample and everything derived from it. Intended to be called
      * only by the monitoring coordinator.
      */
-    suspend fun record(sample: DeviceSample): RecordOutcome {
+    suspend fun record(sample: DeviceSample): RecordOutcome = historyMutex.withLock {
         val id = sampleDao.insert(SampleMappers.toEntity(sample))
 
         val chargingChanged = updateChargingSession(sample)
@@ -163,7 +167,7 @@ class ThermalHistoryRepository(
             )
         }
 
-        val maintenance = runMaintenanceIfDue(sample.timestampMillis)
+        val maintenance = runMaintenanceIfDueUnlocked(sample.timestampMillis)
 
         _latestSample.value = sample
         val outcome = RecordOutcome(
@@ -174,10 +178,22 @@ class ThermalHistoryRepository(
             maintenance = maintenance
         )
         _lastOutcome.value = outcome
-        return outcome
+        outcome
     }
 
     suspend fun recordEvent(
+        timestampMillis: Long,
+        type: ThermalEventType,
+        level: AlertLevel? = null,
+        trigger: AlertTrigger? = null,
+        temperatureC: Float? = null,
+        thermalStatus: ThermalStatusBand? = null,
+        detail: String? = null
+    ) = historyMutex.withLock {
+        recordEventUnlocked(timestampMillis, type, level, trigger, temperatureC, thermalStatus, detail)
+    }
+
+    private suspend fun recordEventUnlocked(
         timestampMillis: Long,
         type: ThermalEventType,
         level: AlertLevel? = null,
@@ -323,10 +339,14 @@ class ThermalHistoryRepository(
 
     suspend fun eventsSinceCount(fromMillis: Long): Long = eventDao.countSince(fromMillis)
 
-    suspend fun runMaintenanceIfDue(nowMillis: Long = clock()): MaintenanceResult? {
+    suspend fun runMaintenanceIfDue(nowMillis: Long = clock()): MaintenanceResult? =
+        historyMutex.withLock { runMaintenanceIfDueUnlocked(nowMillis) }
+
+    private suspend fun runMaintenanceIfDueUnlocked(nowMillis: Long): MaintenanceResult? {
         if (nowMillis - lastMaintenanceMillis < MAINTENANCE_INTERVAL_MILLIS) return null
-        return runMaintenance(nowMillis)
+        return runMaintenanceUnlocked(nowMillis)
     }
+
 
     /**
      * Retention ladder. Buckets are compacted and deleted only on whole-bucket
@@ -335,7 +355,10 @@ class ThermalHistoryRepository(
      * second. The cost of that guarantee is that raw data can outlive its
      * retention window by less than one bucket.
      */
-    suspend fun runMaintenance(nowMillis: Long = clock()): MaintenanceResult {
+    suspend fun runMaintenance(nowMillis: Long = clock()): MaintenanceResult =
+        historyMutex.withLock { runMaintenanceUnlocked(nowMillis) }
+
+    private suspend fun runMaintenanceUnlocked(nowMillis: Long): MaintenanceResult {
         lastMaintenanceMillis = nowMillis
         var result = MaintenanceResult()
 
@@ -380,6 +403,20 @@ class ThermalHistoryRepository(
             deletedEvents = deletedEvents,
             deletedChargingSessions = deletedSessions
         )
+    
+    }
+
+    /** Remove all retained history atomically, without changing user settings. */
+    suspend fun clearHistory() = historyMutex.withLock {
+        database.withTransaction {
+            sampleDao.deleteAll()
+            aggregateDao.deleteAll()
+            eventDao.deleteAll()
+            sessionDao.deleteAll()
+        }
+        _latestSample.value = null
+        _lastOutcome.value = null
+        lastMaintenanceMillis = 0L
     }
 
     // ------------------------------------------------------------------ internals
@@ -404,7 +441,7 @@ class ThermalHistoryRepository(
                     powerSource = sample.battery.plugged.valueOrNull?.storageValue
                 )
             )
-            recordEvent(
+            recordEventUnlocked(
                 timestampMillis = sample.timestampMillis,
                 type = ThermalEventType.CHARGING_STARTED,
                 temperatureC = sample.battery.temperatureC.valueOrNull,
@@ -421,7 +458,7 @@ class ThermalHistoryRepository(
                     endPercent = sample.battery.batteryPercent.valueOrNull
                 )
             )
-            recordEvent(
+            recordEventUnlocked(
                 timestampMillis = sample.timestampMillis,
                 type = ThermalEventType.CHARGING_STOPPED,
                 temperatureC = sample.battery.temperatureC.valueOrNull,
@@ -475,7 +512,7 @@ class ThermalHistoryRepository(
         if (alreadyRecorded) return null
 
         val rate = HistoryMath.riseRateCPerMinute(points, RATE_WINDOW_MILLIS)
-        recordEvent(
+        recordEventUnlocked(
             timestampMillis = sample.timestampMillis,
             type = candidate,
             temperatureC = sample.battery.temperatureC.valueOrNull,

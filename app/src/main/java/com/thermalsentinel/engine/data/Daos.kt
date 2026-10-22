@@ -38,6 +38,9 @@ interface ThermalSampleDao {
     @Query("SELECT COUNT(*) FROM thermal_samples")
     suspend fun count(): Long
 
+    @Query("DELETE FROM thermal_samples")
+    suspend fun deleteAll(): Int
+
     @Query("SELECT COUNT(*) FROM thermal_samples WHERE timestampMillis >= :fromMillis")
     suspend fun countSince(fromMillis: Long): Long
 
@@ -69,6 +72,9 @@ interface ThermalAggregateDao {
     @Query("SELECT COUNT(*) FROM thermal_aggregates WHERE bucketMillis = :bucketMillis")
     suspend fun count(bucketMillis: Long): Long
 
+    @Query("DELETE FROM thermal_aggregates")
+    suspend fun deleteAll(): Int
+
     @Query("DELETE FROM thermal_aggregates WHERE bucketMillis = :bucketMillis AND bucketStartMillis < :beforeMillis")
     suspend fun deleteBefore(bucketMillis: Long, beforeMillis: Long): Int
 }
@@ -93,6 +99,9 @@ interface ThermalEventDao {
 
     @Query("SELECT COUNT(*) FROM thermal_events")
     suspend fun count(): Long
+
+    @Query("DELETE FROM thermal_events")
+    suspend fun deleteAll(): Int
 
     @Query("SELECT COUNT(*) FROM thermal_events WHERE timestampMillis >= :fromMillis")
     suspend fun countSince(fromMillis: Long): Long
@@ -121,6 +130,9 @@ interface ChargingSessionDao {
 
     @Query("SELECT COUNT(*) FROM charging_sessions")
     suspend fun count(): Long
+
+    @Query("DELETE FROM charging_sessions")
+    suspend fun deleteAll(): Int
 
     @Query("DELETE FROM charging_sessions WHERE endMillis IS NOT NULL AND endMillis < :beforeMillis")
     suspend fun deleteClosedBefore(beforeMillis: Long): Int

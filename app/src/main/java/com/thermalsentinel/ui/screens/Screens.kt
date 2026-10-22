@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -1088,6 +1089,10 @@ fun HistoryScreen() {
     val statistics by viewModel.statistics.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val outcome by viewModel.exportState.collectAsStateWithLifecycle()
+    val exportInProgress by viewModel.exportInProgress.collectAsStateWithLifecycle()
+    val clearInProgress by viewModel.clearInProgress.collectAsStateWithLifecycle()
+    val clearMessage by viewModel.clearMessage.collectAsStateWithLifecycle()
+    var showClearConfirmation by rememberSaveable { mutableStateOf(false) }
     val rules by viewModel.rules.collectAsStateWithLifecycle()
 
     val windowEnd = System.currentTimeMillis()
@@ -1095,6 +1100,34 @@ fun HistoryScreen() {
     val chartRange = paddedRange(series)
     val currentOutcome = outcome
     val above = statistics?.timeAboveThresholdMillis
+
+    if (showClearConfirmation) {
+        AlertDialog(
+            onDismissRequest = { if (!clearInProgress) showClearConfirmation = false },
+            title = { Text("Clear all thermal history?") },
+            text = {
+                Text(
+                    "This permanently deletes raw samples, hourly/daily averages, events and charging sessions. " +
+                        "Monitoring preferences and alert rules will remain unchanged."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearConfirmation = false
+                        viewModel.clearHistory()
+                    },
+                    enabled = !clearInProgress
+                ) { Text("Clear history") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showClearConfirmation = false },
+                    enabled = !clearInProgress
+                ) { Text("Cancel") }
+            }
+        )
+    }
 
     ScreenContent {
         ScreenHeader(
@@ -1160,13 +1193,25 @@ fun HistoryScreen() {
             subtitle = "CSV, JSON or PDF written to the app cache, then shared by you — nothing is uploaded",
             icon = { Icon(Icons.Default.Download, null) }
         ) {
-            Button(onClick = viewModel::exportCsv, modifier = Modifier.fillMaxWidth()) {
-                Text("Export CSV")
+            Button(
+                onClick = viewModel::exportCsv,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !exportInProgress
+            ) {
+                Text(if (exportInProgress) "Preparing export…" else "Export CSV")
             }
-            OutlinedButton(onClick = viewModel::exportJson, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = viewModel::exportJson,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !exportInProgress
+            ) {
                 Text("Export JSON")
             }
-            OutlinedButton(onClick = viewModel::exportPdf, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = viewModel::exportPdf,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !exportInProgress
+            ) {
                 Text("Export PDF report")
             }
             when (currentOutcome) {
@@ -1205,6 +1250,29 @@ fun HistoryScreen() {
                 is ExportOutcome.Failure -> NoticeCard(currentOutcome.message, isError = true)
 
                 is ExportOutcome.Empty -> NoticeCard(currentOutcome.message)
+            }
+        }
+
+        FeatureCard(
+            title = "Manage history",
+            subtitle = "Delete stored measurements without changing monitoring preferences or alert rules",
+            icon = { Icon(Icons.Default.Storage, null) }
+        ) {
+            Text(
+                "Clear all locally stored raw samples, compacted averages, events and charging sessions. This cannot be undone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(
+                onClick = { showClearConfirmation = true },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !clearInProgress
+            ) {
+                Text(if (clearInProgress) "Clearing history…" else "Clear all thermal history")
+            }
+            clearMessage?.let { message ->
+                NoticeCard(message, isError = message.startsWith("Could not"))
+                TextButton(onClick = viewModel::dismissClearMessage) { Text("Dismiss") }
             }
         }
 
