@@ -41,7 +41,7 @@ diagnostics surface, CSV export and a real home-screen widget.
 | Alert engine: NORMAL / WARNING / CRITICAL / RECOVERY, hysteresis, cooldown, charging rule, platform-status bands | Implemented |
 | Alert + ongoing notifications, two channels, permission-aware, `POST_NOTIFICATIONS` requested once per install | Implemented |
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
-| CSV export through the app cache and the system share sheet | Implemented |
+| CSV and versioned JSON export through the app cache and the system share sheet | Implemented |
 | Glance home-screen widget, pushed on new samples (≤1/min) | Implemented |
 | DataStore-persisted alert rules, monitoring intent and widget style | Implemented |
 | Appearance preferences (theme, dynamic colour, AMOLED, accent) | Implemented |
@@ -192,3 +192,14 @@ user can open the app to retry.
 
 Device/OEM validation is still required; CI cannot prove Quick Settings behavior or
 foreground-service policy on every Android build.
+
+
+## Structured JSON export
+
+Thermal History can export raw samples as CSV or versioned JSON. JSON includes
+`schema_version`, generation time, sample count and the same explicit measurement
+fields as CSV. Missing measurements are JSON `null`, and non-finite float values
+are normalised to `null` so the document remains valid JSON. Both formats are
+written to the app cache and handed to the Android share sheet; neither is uploaded.
+The export remains limited to the raw-sample retention window and says so when a
+longer window was requested.
