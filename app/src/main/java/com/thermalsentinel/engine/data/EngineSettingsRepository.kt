@@ -62,6 +62,9 @@ class EngineSettingsRepository(private val context: Context) {
         val lastStartedAt = longPreferencesKey("monitoring_last_started_at")
         val lastStoppedAt = longPreferencesKey("monitoring_last_stopped_at")
         val sessionCount = intPreferencesKey("monitoring_session_count")
+        val preferredSamplingIntervalSeconds = intPreferencesKey("preferred_sampling_interval_seconds")
+        val backgroundLoggingEnabled = booleanPreferencesKey("background_logging_enabled")
+        val useFahrenheit = booleanPreferencesKey("use_fahrenheit")
 
         val warningEnabled = booleanPreferencesKey("rules_warning_enabled")
         val warningThresholdC = floatPreferencesKey("rules_warning_threshold_c")
@@ -82,6 +85,11 @@ class EngineSettingsRepository(private val context: Context) {
     }
 
     val monitoringEnabled: Flow<Boolean> = data().map { it[Keys.monitoringEnabled] ?: false }
+    val preferredSamplingIntervalSeconds: Flow<Int> = data().map {
+        normalizeSamplingIntervalSeconds(it[Keys.preferredSamplingIntervalSeconds] ?: DEFAULT_SAMPLING_INTERVAL_SECONDS)
+    }
+    val backgroundLoggingEnabled: Flow<Boolean> = data().map { it[Keys.backgroundLoggingEnabled] ?: false }
+    val useFahrenheit: Flow<Boolean> = data().map { it[Keys.useFahrenheit] ?: false }
 
     val rules: Flow<ThermalAlertRules> = data().map(::readRules)
 
@@ -111,6 +119,22 @@ class EngineSettingsRepository(private val context: Context) {
 
     /** Non-collecting read used by the service, which has no lifecycle to bind to. */
     suspend fun monitoringEnabledNow(): Boolean = monitoringEnabled.first()
+    suspend fun preferredSamplingIntervalSecondsNow(): Int = preferredSamplingIntervalSeconds.first()
+    suspend fun preferredSamplingIntervalMillisNow(): Long = preferredSamplingIntervalSecondsNow() * 1_000L
+    suspend fun backgroundLoggingEnabledNow(): Boolean = backgroundLoggingEnabled.first()
+    suspend fun useFahrenheitNow(): Boolean = useFahrenheit.first()
+
+    suspend fun setPreferredSamplingIntervalSeconds(seconds: Int) = editSafely { prefs ->
+        prefs[Keys.preferredSamplingIntervalSeconds] = normalizeSamplingIntervalSeconds(seconds)
+    }
+
+    suspend fun setBackgroundLoggingEnabled(enabled: Boolean) = editSafely { prefs ->
+        prefs[Keys.backgroundLoggingEnabled] = enabled
+    }
+
+    suspend fun setUseFahrenheit(enabled: Boolean) = editSafely { prefs ->
+        prefs[Keys.useFahrenheit] = enabled
+    }
 
     suspend fun rulesNow(): ThermalAlertRules = rules.first()
 
@@ -206,5 +230,13 @@ class EngineSettingsRepository(private val context: Context) {
         } catch (io: IOException) {
             Log.w(TAG, "Failed to persist engine setting; keeping the previous value", io)
         }
+    }
+
+    companion object {
+        const val DEFAULT_SAMPLING_INTERVAL_SECONDS = 30
+        val SUPPORTED_SAMPLING_INTERVAL_SECONDS = listOf(15, 30, 60, 120)
+
+        fun normalizeSamplingIntervalSeconds(value: Int): Int =
+            SUPPORTED_SAMPLING_INTERVAL_SECONDS.minBy { kotlin.math.abs(it - value) }
     }
 }

@@ -21,7 +21,10 @@ enum class SampleReason(val storageValue: String) {
     BROADCAST_TRIGGERED("broadcast_triggered"),
 
     /** First sample after the monitoring service started. */
-    SERVICE_START("service_start");
+    SERVICE_START("service_start"),
+
+    /** Occasional opt-in WorkManager sample when continuous monitoring is off. */
+    BACKGROUND_LOG("background_log");
 
     companion object {
         fun fromStorage(value: String?): SampleReason =

@@ -131,7 +131,7 @@ class MonitoringCoordinator(
         refreshMonitoringNotification(lastStoredSample ?: history.latestSample.value)
         // A sample is taken immediately on start so the first screen the user
         // sees after enabling monitoring is never empty.
-        sampleNow(SampleReason.SERVICE_START, SamplingPolicy.NORMAL_INTERVAL_MS)
+        sampleNow(SampleReason.SERVICE_START, settings.preferredSamplingIntervalMillisNow())
 
         while (currentCoroutineContext().isActive) {
             val decision = nextDecision()
@@ -141,14 +141,15 @@ class MonitoringCoordinator(
         }
     }
 
-    private fun nextDecision(): SamplingDecision {
+    private suspend fun nextDecision(): SamplingDecision {
         val latest = lastStoredSample
         val context = SamplingContext(
             alertLevel = _alertState.value.level,
             onExternalPower = latest?.battery?.onExternalPower ?: false,
             screenInteractive = interactiveProvider(),
             thermalStatus = thermalCollector.thermalStatus.value.valueOrNull,
-            batteryPercent = latest?.battery?.batteryPercent?.valueOrNull
+            batteryPercent = latest?.battery?.batteryPercent?.valueOrNull,
+            preferredIntervalMillis = settings.preferredSamplingIntervalMillisNow()
         )
         return SamplingPolicy.decide(context)
     }

@@ -11,7 +11,8 @@ data class SamplingContext(
     /** `PowerManager.isInteractive()` — the screen state, not the device state. */
     val screenInteractive: Boolean,
     val thermalStatus: ThermalStatusBand?,
-    val batteryPercent: Int?
+    val batteryPercent: Int?,
+    val preferredIntervalMillis: Long = 30_000L
 )
 
 /**
@@ -114,35 +115,33 @@ object SamplingPolicy {
             )
         }
 
+        val preferred = context.preferredIntervalMillis.coerceIn(15_000L, 120_000L)
         if (context.onExternalPower) {
             return SamplingDecision(
-                CHARGING_INTERVAL_MS,
+                maxOf(CHARGING_INTERVAL_MS, preferred / 2L),
                 SampleReason.SCHEDULED_CHARGING,
-                "Charging, so sampling follows the charging cadence."
+                "Charging, so sampling uses an accelerated version of the selected baseline."
             )
         }
-
         if (!context.screenInteractive) {
             return SamplingDecision(
-                SCREEN_OFF_INTERVAL_MS,
+                maxOf(SCREEN_OFF_INTERVAL_MS, preferred * 2L),
                 SampleReason.SCHEDULED_NORMAL,
                 "Screen is off and the device is on battery, so sampling is relaxed."
             )
         }
-
         val percent = context.batteryPercent
         if (percent != null && percent <= LOW_BATTERY_PERCENT) {
             return SamplingDecision(
-                BATTERY_SAVER_INTERVAL_MS,
+                maxOf(BATTERY_SAVER_INTERVAL_MS, preferred * 3L),
                 SampleReason.SCHEDULED_NORMAL,
                 "Battery is at $percent%, so sampling is relaxed to reduce its own impact."
             )
         }
-
         return SamplingDecision(
-            NORMAL_INTERVAL_MS,
+            preferred,
             SampleReason.SCHEDULED_NORMAL,
-            "Normal cadence."
+            "Normal cadence using the selected active-screen baseline."
         )
     }
 
