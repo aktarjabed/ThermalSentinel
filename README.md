@@ -6,7 +6,7 @@ thermal state**. No account, no cloud, no ads, no analytics.
 This repository now contains a **working V1 monitoring engine** in addition to the
 Compose UI: a foreground service that samples the battery and thermal APIs, a local
 history database with a retention ladder, a hysteresis-aware alert engine, a
-diagnostics surface, CSV + JSON export and a real home-screen widget.
+diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 
 > **Build status:** CI runs the unit tests, both `assemble` variants and `lint` on
 > every push and pull request, and it fails on a Gradle error (the step uses
@@ -196,10 +196,10 @@ foreground-service policy on every Android build.
 
 ## Structured JSON export
 
-Thermal History can export raw samples as CSV or versioned JSON. JSON includes
+Thermal History can export raw samples as CSV, versioned JSON, or a paginated PDF report. JSON includes
 `schema_version`, generation time, sample count and the same explicit measurement
 fields as CSV. Missing measurements are JSON `null`, and non-finite float values
-are normalised to `null` so the document remains valid JSON. Both formats are
+are normalised to `null` so the document remains valid JSON. All formats are
 written to the app cache and handed to the Android share sheet; neither is uploaded.
-The export remains limited to the raw-sample retention window and says so when a
+Exports remain limited to the raw-sample retention window and says so when a
 longer window was requested.
