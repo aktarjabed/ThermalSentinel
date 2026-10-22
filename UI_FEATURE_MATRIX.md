@@ -43,3 +43,10 @@ Status vocabulary:
 | Alert notifications | Live | Two channels; monitoring continues when notifications are blocked, and Diagnostics says the notification is hidden. |
 | CSV export | Live | Sample table only; the window is clamped to raw retention and the result says so. |
 | Cloud sync, analytics, accounts | Not present | Not implemented by design, not merely disabled. |
+
+
+## Quick Settings tile validation
+
+| Surface | Status | Notes |
+|---|---|---|
+| Quick Settings monitoring tile | Implemented; device validation pending | Uses the protected `BIND_QUICK_SETTINGS_TILE` service and the shared `MonitoringController`. Tile state follows live service state, not the persisted intent. Validate add/remove, start/stop, notification denial and OEM restrictions on physical devices. |
