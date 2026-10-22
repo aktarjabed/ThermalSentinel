@@ -1136,7 +1136,7 @@ fun HistoryScreen() {
 
         FeatureCard(
             title = "Export",
-            subtitle = "CSV written to the app cache, then shared by you — nothing is uploaded",
+            subtitle = "CSV, JSON or PDF written to the app cache, then shared by you — nothing is uploaded",
             icon = { Icon(Icons.Default.Download, null) }
         ) {
             Button(onClick = viewModel::exportCsv, modifier = Modifier.fillMaxWidth()) {
@@ -1145,10 +1145,13 @@ fun HistoryScreen() {
             OutlinedButton(onClick = viewModel::exportJson, modifier = Modifier.fillMaxWidth()) {
                 Text("Export JSON")
             }
+            OutlinedButton(onClick = viewModel::exportPdf, modifier = Modifier.fillMaxWidth()) {
+                Text("Export PDF report")
+            }
             when (currentOutcome) {
                 null -> Text(
                     "Exports contain raw samples only; hourly and daily rows are aggregates. " +
-                        "Missing readings stay explicit (blank CSV fields or JSON null).",
+                        "Missing readings stay explicit (blank CSV fields, JSON null, or a dash in PDF).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
