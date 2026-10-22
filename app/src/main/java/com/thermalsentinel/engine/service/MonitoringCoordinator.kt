@@ -1,5 +1,6 @@
 package com.thermalsentinel.engine.service
 
+import android.util.Log
 import com.thermalsentinel.engine.alert.AlertAction
 import com.thermalsentinel.engine.alert.AlertEngine
 import com.thermalsentinel.engine.alert.AlertInput
@@ -19,6 +20,7 @@ import com.thermalsentinel.engine.monitoring.SamplingContext
 import com.thermalsentinel.engine.monitoring.SamplingDecision
 import com.thermalsentinel.engine.monitoring.SamplingPolicy
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -164,22 +166,43 @@ class MonitoringCoordinator(
     }
 
     private suspend fun runLoop() {
-        restorePersistedState()
-        // The service must call startForeground within five seconds, so the very
-        // first ongoing notification is built before any suspending read and
-        // cannot know the persisted alert level. Refresh it as soon as that state
-        // is restored, so an alert that survived a service restart is not shown as
-        // an unremarkable reading for one whole sampling interval.
-        refreshMonitoringNotification(lastStoredSample ?: history.latestSample.value)
-        // A sample is taken immediately on start so the first screen the user
-        // sees after enabling monitoring is never empty.
-        sampleNow(SampleReason.SERVICE_START, settings.preferredSamplingIntervalMillisNow())
+        var initialized = false
+        var consecutiveFailures = 0
 
         while (currentCoroutineContext().isActive) {
-            val decision = nextDecision()
-            _samplingDecision.value = decision
-            delay(decision.intervalMillis)
-            sampleNow(decision.reason, decision.intervalMillis)
+            try {
+                if (!initialized) {
+                    restorePersistedState()
+                    // The service has already entered foreground mode before this
+                    // suspending state restoration. Refresh the notification once
+                    // persisted alert state has been loaded.
+                    refreshMonitoringNotification(lastStoredSample ?: history.latestSample.value)
+                    initialized = true
+                    // Take the first sample immediately so the UI never waits a full
+                    // normal interval after the user explicitly starts monitoring.
+                    sampleNow(SampleReason.SERVICE_START, settings.preferredSamplingIntervalMillisNow())
+                } else {
+                    val decision = nextDecision()
+                    _samplingDecision.value = decision
+                    delay(decision.intervalMillis)
+                    sampleNow(decision.reason, decision.intervalMillis)
+                }
+                consecutiveFailures = 0
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(MAX_FAILURE_BACKOFF_STEPS)
+                val backoffMillis = minOf(
+                    MAX_FAILURE_BACKOFF_MILLIS,
+                    INITIAL_FAILURE_BACKOFF_MILLIS * (1L shl (consecutiveFailures - 1))
+                )
+                // One database, notification or OEM API failure must not silently kill
+                // the sampling coroutine while the foreground service still claims
+                // that monitoring is running. Preserve cancellation; retry transient
+                // failures with bounded exponential backoff and a diagnostic log.
+                Log.e(TAG, "Monitoring cycle failed; retrying in $backoffMillis ms", failure)
+                delay(backoffMillis)
+            }
         }
     }
 
@@ -270,4 +293,11 @@ class MonitoringCoordinator(
         publisher.updateMonitoringNotification(notification)
     }
 
+
+    companion object {
+        private const val TAG = "ThermalMonitoringLoop"
+        private const val INITIAL_FAILURE_BACKOFF_MILLIS = 2_000L
+        private const val MAX_FAILURE_BACKOFF_MILLIS = 60_000L
+        private const val MAX_FAILURE_BACKOFF_STEPS = 5
+    }
 }
