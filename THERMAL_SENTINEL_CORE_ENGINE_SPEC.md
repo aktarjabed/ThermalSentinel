@@ -231,13 +231,16 @@ neither a row nor a notification.
 |---|---|---|
 | Alert state CRITICAL or platform status ≥ SEVERE | 5 s | Fast follow-up while a critical condition is present. |
 | Alert state WARNING/RECOVERY or platform status ≥ MODERATE | 10 s | Accelerated follow-up through warning and recovery. |
-| Charging | 15 s | Charging heat is the dominant thermal load. |
-| Screen off | 60 s | Nothing is watching; save power. |
-| Battery < 15 % and unplugged | 90 s | The last few percent of charge are not spent on monitoring. |
-| Otherwise | 30 s | Normal cadence. |
+| Charging | max(15 s, preferred baseline / 2) | Charging heat is the dominant thermal load. |
+| Screen off | max(60 s, preferred baseline × 2) | Nothing is watching; save power. |
+| Battery < 15 % and unplugged | max(90 s, preferred baseline × 3) | The last few percent of charge are not spent on monitoring. |
+| Otherwise | preferred baseline (default 30 s) | Normal cadence using the selected setting. |
 
-Floor: 5 s (`MIN_INTERVAL_MS`). Each decision carries a reason so Diagnostics can explain
-the current cadence instead of showing an unexplained number.
+The active-screen normal baseline is persisted in DataStore and restricted to 15, 30, 60,
+or 120 seconds. Event conditions take precedence over the preference; charging, screen-off
+and low-battery conditions adapt that baseline using the formulas above. The smallest
+interval remains 5 s (MIN_INTERVAL_MS), and each decision carries a reason so Diagnostics
+can explain the current cadence instead of showing an unexplained number.
 
 ---
 

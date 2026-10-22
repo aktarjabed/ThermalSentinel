@@ -123,20 +123,24 @@ Per-screen status is in [`UI_FEATURE_MATRIX.md`](UI_FEATURE_MATRIX.md).
 
 ### Tests
 
-**104 JVM unit tests** (15 UI contract tests + 89 engine tests):
+**121 JVM unit tests** (15 UI contract tests + 106 engine tests):
 
 | Class | Tests | Covers |
 |---|---|---|
 | `AlertEngineTest` | 18 | Escalation, jump to critical, explicit recovery phase, hysteresis hold, cooldown vs. escalation, reminders, cleared-is-always-announced, ending an alert cancels the visible notification once, absent-data hold, status bands, charging rule, storage round-trip, `since` tracking |
 | `ThermalAlertRulesTest` | 9 | Every `RuleViolation`, `clamped()` validity, charging thresholds, lowest triggered band |
 | `PlatformValuesTest` | 14 | Unsupported sentinels, valid zero temperature/current/cycle counts, voltage and percent bounds, `NaN` headroom, unknown status levels |
-| `SamplingPolicyTest` | 12 | Branch priority, charging vs. low battery, recovery cadence, unknown status is not elevated, 5 s floor |
+| `SamplingPolicyTest` | 15 | Branch priority, configurable 15/30/60/120 s baseline, charging/screen-off/low-battery adaptation, recovery cadence, 5 s floor |
 | `ThermalHeadroomReadLimiterTest` | 4 | First read, 10 s minimum interval, exact boundary, backwards-clock fail-closed behavior |
 | `HistoryMathTest` | 13 | Segment splitting, holes, min/max/avg over present values only, threshold time, least-squares rate fit (interior points used, out-of-window samples ignored, no time axis or a span under 3 min → no rate) |
 | `ReadingTest` | 6 | `Present`/`Absent` semantics, covariance, labels |
+| `ThermalFormattingTest` | 3 | Celsius/Fahrenheit conversion, absent values, rate conversion without offset |
 | `ThermalCsvTest` | 6 | Header contract, empty fields for absent values, locale-independent decimals, quoting, timestamps |
+| `ThermalJsonTest` | 3 | Versioned JSON structure, absent fields as null, escaping and non-finite-number normalization |
 | `SampleMappersTest` | 3 | Real zero temperature, explicit absent-value round-trip, enums and sampling metadata |
 | `RetentionPolicyTest` | 4 | Bucket alignment, cut-offs, ladder ordering, divide-by-zero guard |
+| `ThermalForecastTest` | 5 | Rising-trend ETA, threshold already reached, flat/falling trend, missing/non-finite/insufficient points, duplicate timestamps |
+| `BackgroundLoggingPolicyTest` | 3 | Skip while monitoring is active, skip recent readings, allow stale/missing data, fail closed on future timestamps |
 | `EngineContractParsingTest`, `UiPreferencesParsingTest`, `RouteContractTest` | 15 | Storage-value round trips, fallbacks, routes ↔ drawer consistency |
 
 **2 instrumented smoke tests** (`NavigationSmokeTest`, need a device or emulator):

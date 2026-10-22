@@ -16,7 +16,7 @@ Status vocabulary:
 | Screen | Feature surface | Status in this build | Notes |
 |---|---|---|---|
 | Dashboard | Monitoring control + latest thermal/battery sample + Quick Access | Live (partial) | Live: start/stop/resume, alert state, latest sample, freshness. Placeholders: "Risk snapshot" rows report that the correlation engine does not exist yet; network/security rows state "not implemented". |
-| Thermal Monitor | Battery temperature, platform thermal status, headroom, 24 h trend, recorded events, active rules | Live | Temperature, status and headroom come from the collectors; the chart draws raw samples and shows gaps as gaps; events are read from the local event table. |
+| Thermal Monitor | Battery temperature, platform thermal status, headroom, 24 h trend, time-to-warning estimate, recorded events, active rules | Live | Temperature, status and headroom come from the collectors; the chart draws raw samples and shows gaps as gaps; events are read from the local event table. |
 | Battery & Charging | Charge, voltage, current, health, cycle count, capacity level, charging sessions | Live | Unsupported platform values render their absence reason ("Unavailable on this device") rather than `0`. |
 | Alert Rules | Warning/critical thresholds, hysteresis, cooldown, charging rule, platform bands | Live | Rules are persisted in DataStore and evaluated by the running engine; invalid combinations are clamped and explained. |
 | Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON + PDF export + clear history | Live | Exports contain raw samples only; PDF is paginated, JSON is schema-versioned and absent values are null. Longer ranges read compacted buckets and are labelled as averages; time above threshold is not estimated from aggregates. |
@@ -38,7 +38,8 @@ Status vocabulary:
 
 | Component | Status | Notes |
 |---|---|---|
-| Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |\n| Light background logger | Live (opt-in) | Unique WorkManager periodic work; skips while monitoring is running or a recent sample exists; never claims real-time alert monitoring. |
+| Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |
+| Light background logger | Live (opt-in) | Unique WorkManager periodic work; skips while monitoring is running or a recent sample exists; never claims real-time alert monitoring. |
 | Local history database | Live | Room v1 with a 7 d / 90 d / 400 d retention ladder; no destructive migration. |
 | Alert notifications | Live | Two channels; monitoring continues when notifications are blocked, and Diagnostics says the notification is hidden. |
 | CSV + JSON + PDF export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null; CSV/JSON are capped at 50,000 rows and PDF at 10,000 rows before rendering to bound memory use. The window is clamped to raw retention and the result says so. |
