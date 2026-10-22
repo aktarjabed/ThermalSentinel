@@ -190,6 +190,12 @@ class HistoryViewModel(application: Application) : HistoryReadingViewModel(appli
         }
     }
 
+    fun exportJson() {
+        viewModelScope.launch {
+            _exportState.value = graph.exporter.exportSamplesJson(_range.value.windowMillis)
+        }
+    }
+
     /**
      * Gap threshold for the chart. Three screen-off intervals is the same limit
      * the statistics use, so the chart and the numbers cannot disagree about what
