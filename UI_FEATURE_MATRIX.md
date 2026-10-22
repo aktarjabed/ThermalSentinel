@@ -27,7 +27,7 @@ Status vocabulary:
 | App Activity | Package inventory, risk state, activity correlation | UI only | — |
 | Security Scanner | Evidence, confidence, risk assessment | UI only | — |
 | Security Timeline | Correlated local event stream | UI only | The thermal event timeline is real and lives on Thermal Monitor. |
-| Reports & Export | Report surfaces and export formats | Live (partial) | Live: CSV export of stored samples, via the app cache and the system share sheet. UI only: JSON, PDF and the combined report bundle. |
+| Reports & Export | Thermal history CSV + JSON | Live (partial) | CSV and versioned JSON export raw samples through the app cache and system share sheet. PDF and the combined diagnostic bundle remain unimplemented; security/privacy report surfaces are not active engines. |
 | Quick Access | Battery/network/display settings intents | UI only | Rows are disabled and label the intent they will use. |
 | Diagnostics | Runtime readiness checks | Live | 11 checks; "cannot be verified" (for OEM background limits) is reported as `UNKNOWN`, never as a pass. |
 | Settings | Appearance preferences + engine position | Live | Theme mode, dynamic colour, AMOLED and accent are persisted in DataStore. Monitoring thresholds live on Alert Rules. |
