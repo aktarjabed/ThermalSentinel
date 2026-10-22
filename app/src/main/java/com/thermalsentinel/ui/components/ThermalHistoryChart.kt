@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.thermalsentinel.engine.monitoring.HistoryMath
+import com.thermalsentinel.ui.data.LocalUseFahrenheit
 
 /**
  * Temperature chart that tells the truth about missing data.
@@ -41,6 +42,12 @@ fun ThermalHistoryChart(
     maxGapMillis: Long = 5 * 60_000L,
     modifier: Modifier = Modifier
 ) {
+    val useFahrenheit = LocalUseFahrenheit.current
+    val displayTemperature: (Float) -> Float = { value ->
+        if (useFahrenheit) value * 9f / 5f + 32f else value
+    }
+    val displayMinValue = displayTemperature(minValue)
+    val displayMaxValue = displayTemperature(maxValue)
     val lineColor = MaterialTheme.colorScheme.primary
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val thresholdColor = MaterialTheme.colorScheme.error
@@ -53,7 +60,7 @@ fun ThermalHistoryChart(
         val inset = dotPx
         val plotWidth = size.width - inset * 2f
         val plotHeight = size.height - inset * 2f
-        val range = (maxValue - minValue).coerceAtLeast(0.01f)
+        val range = (displayMaxValue - displayMinValue).coerceAtLeast(0.01f)
         val windowDuration = (windowEndMillis - windowStartMillis).coerceAtLeast(1L)
 
         repeat(5) { index ->
@@ -72,8 +79,10 @@ fun ThermalHistoryChart(
             return inset + plotWidth * fraction
         }
 
-        fun yAt(value: Float): Float =
-            inset + plotHeight * (1f - ((value - minValue) / range).coerceIn(0f, 1f))
+        fun yAt(value: Float): Float {
+            val displayed = displayTemperature(value)
+            return inset + plotHeight * (1f - ((displayed - displayMinValue) / range).coerceIn(0f, 1f))
+        }
 
         if (thresholdC != null && thresholdC in minValue..maxValue) {
             val y = yAt(thresholdC)

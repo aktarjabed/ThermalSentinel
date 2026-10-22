@@ -1,5 +1,6 @@
 package com.thermalsentinel.engine.service
 
+import android.util.Log
 import com.thermalsentinel.engine.alert.AlertAction
 import com.thermalsentinel.engine.alert.AlertEngine
 import com.thermalsentinel.engine.alert.AlertInput
@@ -19,6 +20,8 @@ import com.thermalsentinel.engine.monitoring.SamplingContext
 import com.thermalsentinel.engine.monitoring.SamplingDecision
 import com.thermalsentinel.engine.monitoring.SamplingPolicy
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -63,7 +66,9 @@ class MonitoringCoordinator(
     private val _alertExplanation = MutableStateFlow("No sample evaluated yet.")
     val alertExplanation: StateFlow<String> = _alertExplanation.asStateFlow()
 
+    private val lifecycleLock = Any()
     private var loopJob: Job? = null
+    private var restartRequestedAfterCancellation = false
     private var previousTimestampMillis: Long? = null
     private var lastStoredSample: DeviceSample? = null
 
@@ -71,20 +76,71 @@ class MonitoringCoordinator(
         _alertState.value = settings.alertStateNow()
     }
 
+    /**
+     * Starts the collectors exactly once per active loop. A cancelled loop keeps
+     * ownership until its finally block runs, preventing duplicate receiver/listener
+     * registration if the service is quickly stopped and restarted.
+     */
     fun start() {
-        batteryCollector.start()
-        thermalCollector.start()
-        if (loopJob != null) return
-        loopJob = scope.launch { runLoop() }
+        synchronized(lifecycleLock) {
+            val current = loopJob
+            if (current != null) {
+                if (!current.isActive) restartRequestedAfterCancellation = true
+                return
+            }
+            try {
+                batteryCollector.start()
+                thermalCollector.start()
+            } catch (failure: Exception) {
+                stopCollectorsSafely()
+                throw failure
+            }
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    runLoop()
+                } finally {
+                    val restart = synchronized(lifecycleLock) {
+                        if (loopJob === coroutineContext[Job]) loopJob = null
+                        val requested = restartRequestedAfterCancellation
+                        restartRequestedAfterCancellation = false
+                        requested
+                    }
+                    stopCollectorsSafely()
+                    if (restart) {
+                        start()
+                    } else {
+                        cancelMonitoringNotificationSafely()
+                    }
+                }
+            }
+            loopJob = job
+            job.start()
+        }
     }
 
     /** Stops sampling and clears the ongoing notification. Safe to call twice. */
     fun stop() {
-        loopJob?.cancel()
-        loopJob = null
-        batteryCollector.stop()
-        thermalCollector.stop()
-        publisher.cancelMonitoringNotification()
+        synchronized(lifecycleLock) {
+            restartRequestedAfterCancellation = false
+            loopJob?.cancel()
+            stopCollectorsSafely()
+            cancelMonitoringNotificationSafely()
+        }
+    }
+
+    private fun stopCollectorsSafely() {
+        runCatching { batteryCollector.stop() }.onFailure {
+            Log.w(TAG, "Failed to unregister the battery collector", it)
+        }
+        runCatching { thermalCollector.stop() }.onFailure {
+            Log.w(TAG, "Failed to unregister the thermal collector", it)
+        }
+    }
+
+    private fun cancelMonitoringNotificationSafely() {
+        runCatching { publisher.cancelMonitoringNotification() }.onFailure {
+            Log.w(TAG, "Failed to cancel monitoring notification during cleanup", it)
+        }
     }
 
     /**
@@ -122,33 +178,59 @@ class MonitoringCoordinator(
     }
 
     private suspend fun runLoop() {
-        restorePersistedState()
-        // The service must call startForeground within five seconds, so the very
-        // first ongoing notification is built before any suspending read and
-        // cannot know the persisted alert level. Refresh it as soon as that state
-        // is restored, so an alert that survived a service restart is not shown as
-        // an unremarkable reading for one whole sampling interval.
-        refreshMonitoringNotification(lastStoredSample ?: history.latestSample.value)
-        // A sample is taken immediately on start so the first screen the user
-        // sees after enabling monitoring is never empty.
-        sampleNow(SampleReason.SERVICE_START, SamplingPolicy.NORMAL_INTERVAL_MS)
+        var initialized = false
+        var firstSampleCompleted = false
+        var consecutiveFailures = 0
 
         while (currentCoroutineContext().isActive) {
-            val decision = nextDecision()
-            _samplingDecision.value = decision
-            delay(decision.intervalMillis)
-            sampleNow(decision.reason, decision.intervalMillis)
+            try {
+                if (!initialized) {
+                    restorePersistedState()
+                    // The service has already entered foreground mode before this
+                    // suspending state restoration. Refresh the notification once
+                    // persisted alert state has been loaded.
+                    refreshMonitoringNotification(lastStoredSample ?: history.latestSample.value)
+                    initialized = true
+                }
+                if (!firstSampleCompleted) {
+                    // Retry the immediate sample after a failure instead of waiting
+                    // a full scheduled interval before the first recorded reading.
+                    sampleNow(SampleReason.SERVICE_START, settings.preferredSamplingIntervalMillisNow())
+                    firstSampleCompleted = true
+                } else {
+                    val decision = nextDecision()
+                    _samplingDecision.value = decision
+                    delay(decision.intervalMillis)
+                    sampleNow(decision.reason, decision.intervalMillis)
+                }
+                consecutiveFailures = 0
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                consecutiveFailures = (consecutiveFailures + 1).coerceAtMost(MAX_FAILURE_BACKOFF_STEPS)
+                val backoffMillis = minOf(
+                    MAX_FAILURE_BACKOFF_MILLIS,
+                    INITIAL_FAILURE_BACKOFF_MILLIS * (1L shl (consecutiveFailures - 1))
+                )
+                // One database, notification or OEM API failure must not silently kill
+                // the sampling coroutine while the foreground service still claims
+                // that monitoring is running. Preserve cancellation; retry transient
+                // failures with bounded exponential backoff and a diagnostic log.
+                Log.e(TAG, "Monitoring cycle failed; retrying in $backoffMillis ms", failure)
+                delay(backoffMillis)
+            }
         }
     }
 
-    private fun nextDecision(): SamplingDecision {
+    private suspend fun nextDecision(): SamplingDecision {
         val latest = lastStoredSample
         val context = SamplingContext(
             alertLevel = _alertState.value.level,
             onExternalPower = latest?.battery?.onExternalPower ?: false,
             screenInteractive = interactiveProvider(),
             thermalStatus = thermalCollector.thermalStatus.value.valueOrNull,
-            batteryPercent = latest?.battery?.batteryPercent?.valueOrNull
+            batteryPercent = latest?.battery?.batteryPercent?.valueOrNull,
+            preferredIntervalMillis = settings.preferredSamplingIntervalMillisNow()
         )
         return SamplingPolicy.decide(context)
     }
@@ -181,7 +263,10 @@ class MonitoringCoordinator(
                         thermalStatus = action.thermalStatus,
                         detail = evaluation.explanation
                     )
-                    publisher.publishAlert(action, rules, sample.battery.onExternalPower)
+                    publisher.publishAlert(
+                        action, rules, sample.battery.onExternalPower,
+                        useFahrenheit = settings.useFahrenheitNow()
+                    )
                 }
 
                 is AlertAction.Cleared -> {
@@ -193,7 +278,9 @@ class MonitoringCoordinator(
                         thermalStatus = action.thermalStatus,
                         detail = evaluation.explanation
                     )
-                    publisher.publishClearedNotification(action, rules)
+                    publisher.publishClearedNotification(
+                        action, rules, useFahrenheit = settings.useFahrenheitNow()
+                    )
                 }
 
                 is AlertAction.AlertEnded -> {
@@ -212,13 +299,21 @@ class MonitoringCoordinator(
      * any sample has been taken in it; the publisher renders that as "waiting for
      * a reading" rather than as a zero.
      */
-    private fun refreshMonitoringNotification(sample: DeviceSample?) {
+    private suspend fun refreshMonitoringNotification(sample: DeviceSample?) {
         val notification = publisher.buildMonitoringNotification(
             sample = sample,
             alertLevel = _alertState.value.level,
-            updating = true
+            updating = true,
+            useFahrenheit = settings.useFahrenheitNow()
         )
         publisher.updateMonitoringNotification(notification)
     }
 
+
+    companion object {
+        private const val TAG = "ThermalMonitoringLoop"
+        private const val INITIAL_FAILURE_BACKOFF_MILLIS = 2_000L
+        private const val MAX_FAILURE_BACKOFF_MILLIS = 60_000L
+        private const val MAX_FAILURE_BACKOFF_STEPS = 5
+    }
 }

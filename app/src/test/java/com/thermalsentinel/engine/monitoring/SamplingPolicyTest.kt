@@ -14,8 +14,11 @@ class SamplingPolicyTest {
         onExternalPower: Boolean = false,
         screenInteractive: Boolean = true,
         thermalStatus: ThermalStatusBand? = ThermalStatusBand.NONE,
-        batteryPercent: Int? = 80
-    ) = SamplingContext(alertLevel, onExternalPower, screenInteractive, thermalStatus, batteryPercent)
+        batteryPercent: Int? = 80,
+        preferredIntervalMillis: Long = SamplingPolicy.NORMAL_INTERVAL_MS
+    ) = SamplingContext(
+        alertLevel, onExternalPower, screenInteractive, thermalStatus, batteryPercent, preferredIntervalMillis
+    )
 
     @Test
     fun normalCadenceIsTheDefault() {
@@ -95,6 +98,33 @@ class SamplingPolicyTest {
         // UNKNOWN means "no information", so it must not be read as elevated.
         val decision = SamplingPolicy.decide(context(thermalStatus = ThermalStatusBand.UNKNOWN))
         assertEquals(SamplingPolicy.NORMAL_INTERVAL_MS, decision.intervalMillis)
+    }
+
+    @Test
+    fun selectedBaselineControlsNormalCadence() {
+        for (seconds in listOf(15, 30, 60, 120)) {
+            val decision = SamplingPolicy.decide(context(preferredIntervalMillis = seconds * 1_000L))
+            assertEquals(seconds * 1_000L, decision.intervalMillis)
+        }
+    }
+
+    @Test
+    fun selectedBaselineStillAdaptsToChargingScreenOffAndLowBattery() {
+        assertEquals(60_000L, SamplingPolicy.decide(
+            context(onExternalPower = true, preferredIntervalMillis = 120_000L)
+        ).intervalMillis)
+        assertEquals(240_000L, SamplingPolicy.decide(
+            context(screenInteractive = false, preferredIntervalMillis = 120_000L)
+        ).intervalMillis)
+        assertEquals(360_000L, SamplingPolicy.decide(
+            context(batteryPercent = 10, preferredIntervalMillis = 120_000L)
+        ).intervalMillis)
+    }
+
+    @Test
+    fun selectedBaselineIsClampedToSupportedBounds() {
+        assertEquals(15_000L, SamplingPolicy.decide(context(preferredIntervalMillis = 1L)).intervalMillis)
+        assertEquals(120_000L, SamplingPolicy.decide(context(preferredIntervalMillis = 999_000L)).intervalMillis)
     }
 
     @Test

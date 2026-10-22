@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -68,6 +69,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -103,6 +105,7 @@ import com.thermalsentinel.ui.data.AccentPreset
 import com.thermalsentinel.ui.data.ThemeMode
 import com.thermalsentinel.ui.data.UiPreferences
 import com.thermalsentinel.ui.data.WidgetStyle
+import com.thermalsentinel.ui.data.LocalUseFahrenheit
 import com.thermalsentinel.ui.navigation.Routes
 // Required: seed() is an internal extension in the theme package.
 import com.thermalsentinel.ui.theme.seed
@@ -141,8 +144,9 @@ import com.thermalsentinel.ui.live.ThermalViewModel
  * the user's locale; `Locale.ROOT` would force "38.4°C" everywhere, which is
  * not what Android convention expects.
  */
+@Composable
 private fun celsius(value: Float): String =
-    String.format(Locale.getDefault(), "%.1f°C", value)
+    ThermalFormatting.temperature(value, LocalUseFahrenheit.current)
 
 /**
  * Honest scroll container. fillMaxSize guarantees the container occupies the
@@ -177,11 +181,14 @@ private fun Reading<*>?.absenceLabelOrMarker(): String =
 
 private fun <T> Reading<T>?.presentOrNull(): T? = this?.valueOrNull
 
+@Composable
 private fun temperatureText(reading: Reading<Float>?): String =
-    reading.presentOrNull()?.let { ThermalFormatting.temperatureCelsius(it) }
+    reading.presentOrNull()?.let { ThermalFormatting.temperature(it, LocalUseFahrenheit.current) }
         ?: reading.absenceLabelOrMarker()
 
-private fun temperatureValueText(value: Float?): String = ThermalFormatting.temperatureCelsius(value)
+@Composable
+private fun temperatureValueText(value: Float?): String =
+    ThermalFormatting.temperature(value, LocalUseFahrenheit.current)
 
 private fun headroomText(reading: Reading<Float>?): String =
     // Headroom is a ratio between readings, so it is never rendered with a degree sign.
@@ -487,6 +494,7 @@ fun ThermalScreen() {
     val statistics by viewModel.statistics.collectAsStateWithLifecycle()
     val events by viewModel.events.collectAsStateWithLifecycle()
     val rules by viewModel.rules.collectAsStateWithLifecycle()
+    val forecast by viewModel.forecast.collectAsStateWithLifecycle()
 
     val current = sample
     val battery = current?.battery
@@ -499,6 +507,8 @@ fun ThermalScreen() {
     // The threshold plotted is the one the engine actually alerts on right now,
     // including the separate charging threshold when it applies.
     val activeThreshold = rules.effectiveWarningThresholdC(battery?.onExternalPower == true)
+    // Snapshot delegated Compose state into a stable local for Kotlin smart casts.
+    val forecastEstimate = forecast
 
     ScreenContent {
         ScreenHeader(
@@ -554,6 +564,25 @@ fun ThermalScreen() {
             KeyValueRow("Maximum", temperatureValueText(statistics?.maxTemperatureC))
             KeyValueRow("Average", temperatureValueText(statistics?.averageTemperatureC))
             KeyValueRow("Warning threshold", celsius(activeThreshold))
+            KeyValueRow(
+                "Estimated time to warning",
+                when {
+                    forecastEstimate == null -> "Insufficient evidence or no rising trend"
+                    forecastEstimate.minutesToThreshold <= 0f -> "At or above the fitted threshold now"
+                    else -> "~${maxOf(1, forecastEstimate.minutesToThreshold.roundToInt())} min at the recent trend"
+                }
+            )
+            KeyValueRow(
+                "Fitted heating rate",
+                forecastEstimate?.let {
+                    ThermalFormatting.temperatureRate(it.slopeCPerMinute, LocalUseFahrenheit.current)
+                } ?: "Not enough recent samples"
+            )
+            Text(
+                "Forecast is a short-term linear estimate from recent battery-temperature samples, not a guarantee.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             val above = statistics?.timeAboveThresholdMillis
             KeyValueRow(
                 "Time above threshold",
@@ -763,7 +792,7 @@ fun BatteryScreen() {
         ) {
             KeyValueRow("Samples taken while charging", (statistics?.chargingSampleCount ?: 0).toString())
             KeyValueRow("Maximum temperature today", temperatureValueText(statistics?.maxTemperatureC))
-            KeyValueRow("Records over 40 °C today", "Counted in Thermal History")
+            KeyValueRow("Records over ${celsius(40f)} today", "Counted in Thermal History")
         }
 
         FeatureCard(
@@ -1067,6 +1096,10 @@ fun HistoryScreen() {
     val statistics by viewModel.statistics.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val outcome by viewModel.exportState.collectAsStateWithLifecycle()
+    val exportInProgress by viewModel.exportInProgress.collectAsStateWithLifecycle()
+    val clearInProgress by viewModel.clearInProgress.collectAsStateWithLifecycle()
+    val clearMessage by viewModel.clearMessage.collectAsStateWithLifecycle()
+    var showClearConfirmation by rememberSaveable { mutableStateOf(false) }
     val rules by viewModel.rules.collectAsStateWithLifecycle()
 
     val windowEnd = System.currentTimeMillis()
@@ -1074,6 +1107,34 @@ fun HistoryScreen() {
     val chartRange = paddedRange(series)
     val currentOutcome = outcome
     val above = statistics?.timeAboveThresholdMillis
+
+    if (showClearConfirmation) {
+        AlertDialog(
+            onDismissRequest = { if (!clearInProgress) showClearConfirmation = false },
+            title = { Text("Clear all thermal history?") },
+            text = {
+                Text(
+                    "This permanently deletes raw samples, hourly/daily averages, events and charging sessions. " +
+                        "Monitoring preferences and alert rules will remain unchanged."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearConfirmation = false
+                        viewModel.clearHistory()
+                    },
+                    enabled = !clearInProgress
+                ) { Text("Clear history") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showClearConfirmation = false },
+                    enabled = !clearInProgress
+                ) { Text("Cancel") }
+            }
+        )
+    }
 
     ScreenContent {
         ScreenHeader(
@@ -1139,13 +1200,25 @@ fun HistoryScreen() {
             subtitle = "CSV, JSON or PDF written to the app cache, then shared by you — nothing is uploaded",
             icon = { Icon(Icons.Default.Download, null) }
         ) {
-            Button(onClick = viewModel::exportCsv, modifier = Modifier.fillMaxWidth()) {
-                Text("Export CSV")
+            Button(
+                onClick = viewModel::exportCsv,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !exportInProgress
+            ) {
+                Text(if (exportInProgress) "Preparing export…" else "Export CSV")
             }
-            OutlinedButton(onClick = viewModel::exportJson, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = viewModel::exportJson,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !exportInProgress
+            ) {
                 Text("Export JSON")
             }
-            OutlinedButton(onClick = viewModel::exportPdf, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = viewModel::exportPdf,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !exportInProgress
+            ) {
                 Text("Export PDF report")
             }
             when (currentOutcome) {
@@ -1184,6 +1257,29 @@ fun HistoryScreen() {
                 is ExportOutcome.Failure -> NoticeCard(currentOutcome.message, isError = true)
 
                 is ExportOutcome.Empty -> NoticeCard(currentOutcome.message)
+            }
+        }
+
+        FeatureCard(
+            title = "Manage history",
+            subtitle = "Delete stored measurements without changing monitoring preferences or alert rules",
+            icon = { Icon(Icons.Default.Storage, null) }
+        ) {
+            Text(
+                "Clear all locally stored raw samples, compacted averages, events and charging sessions. This cannot be undone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(
+                onClick = { showClearConfirmation = true },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !clearInProgress
+            ) {
+                Text(if (clearInProgress) "Clearing history…" else "Clear all thermal history")
+            }
+            clearMessage?.let { message ->
+                NoticeCard(message, isError = message.startsWith("Could not"))
+                TextButton(onClick = viewModel::dismissClearMessage) { Text("Dismiss") }
             }
         }
 
@@ -1300,6 +1396,10 @@ fun SettingsScreen(
     onAmoledChanged: (Boolean) -> Unit,
     onAccentChanged: (String) -> Unit
 ) {
+    val monitoringSettings: MonitoringViewModel = viewModel()
+    val preferredIntervalSeconds by monitoringSettings.preferredSamplingIntervalSeconds.collectAsStateWithLifecycle()
+    val backgroundLoggingEnabled by monitoringSettings.backgroundLoggingEnabled.collectAsStateWithLifecycle()
+
     ScreenContent {
         ScreenHeader(
             "Settings",
@@ -1340,10 +1440,53 @@ fun SettingsScreen(
                 )
             }
         }
-        FeatureCard("Monitoring", "Future thermal/battery controls", { Icon(Icons.Default.Thermostat, null) }) {
-            SettingSwitch("Background monitoring", "Persistent monitoring service", false)
-            SettingSwitch("Adaptive sampling", "Change sampling rate based on thermal state", true)
-            SettingSwitch("24h history", "Persist thermal measurements locally", true)
+        FeatureCard(
+            "Thermal monitoring",
+            "Preferences apply to future samples; alert states continue to override the normal cadence",
+            { Icon(Icons.Default.Thermostat, null) }
+        ) {
+            Text("Normal sampling interval", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Select the active-screen baseline when no thermal event is active.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                listOf(15, 30, 60, 120).forEach { seconds ->
+                    FilterChip(
+                        selected = preferredIntervalSeconds == seconds,
+                        onClick = { monitoringSettings.setPreferredSamplingIntervalSeconds(seconds) },
+                        label = { Text("$seconds s") }
+                    )
+                }
+            }
+            SettingSwitch(
+                "Fahrenheit display",
+                "Display conversions only; saved history, thresholds, calculations and CSV/JSON/PDF exports remain Celsius-based.",
+                LocalUseFahrenheit.current,
+                onCheckedChange = monitoringSettings::setUseFahrenheit
+            )
+            DividerRow()
+            SettingSwitch(
+                "Light background logging",
+                "Opt-in sample every 15 minutes or later. Skips recent readings, does not send alerts and never starts continuous monitoring.",
+                backgroundLoggingEnabled,
+                onCheckedChange = monitoringSettings::setBackgroundLoggingEnabled
+            )
+            Text(
+                "Android may defer background work under Doze or battery constraints. Turn on continuous monitoring from the Dashboard for live alerts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            monitoringSettings.message.collectAsStateWithLifecycle().value?.let { message ->
+                NoticeCard(
+                    message,
+                    isError = message.startsWith("Could not") || message.contains("could not")
+                )
+            }
         }
         FeatureCard("Network protection", "Future VPN controls", { Icon(Icons.Default.Wifi, null) }) {
             SettingSwitch("Network protection", "Local VPN firewall", false)
@@ -1723,7 +1866,7 @@ fun AlertRulesScreen() {
         ) {
             SettingSwitch(
                 title = "Enable critical alerts",
-                subtitle = "Kept at least 1 °C above the warning threshold",
+                subtitle = "Kept above the warning threshold by the configured hysteresis gap",
                 checked = rules.criticalEnabled,
                 onCheckedChange = viewModel::setCriticalEnabled
             )
@@ -1857,6 +2000,11 @@ private fun TemperatureEditor(
     enabled: Boolean,
     range: ClosedFloatingPointRange<Float>
 ) {
+    val useFahrenheit = LocalUseFahrenheit.current
+    val displayValue = if (useFahrenheit) ThermalFormatting.celsiusToFahrenheit(value) else value
+    val displayStart = if (useFahrenheit) ThermalFormatting.celsiusToFahrenheit(range.start) else range.start
+    val displayEnd = if (useFahrenheit) ThermalFormatting.celsiusToFahrenheit(range.endInclusive) else range.endInclusive
+    val displayRange = displayStart..displayEnd
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
@@ -1866,16 +2014,18 @@ private fun TemperatureEditor(
                 else MaterialTheme.colorScheme.outline
             )
             Text(
-                "${value.roundToInt()}°C",
+                celsius(value),
                 style = MaterialTheme.typography.titleMedium,
                 color = if (enabled) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.outline
             )
         }
         Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = range,
+            value = displayValue,
+            onValueChange = { displayed ->
+                onValueChange(if (useFahrenheit) (displayed - 32f) * 5f / 9f else displayed)
+            },
+            valueRange = displayRange,
             enabled = enabled,
             steps = (range.endInclusive - range.start).roundToInt() - 1
         )

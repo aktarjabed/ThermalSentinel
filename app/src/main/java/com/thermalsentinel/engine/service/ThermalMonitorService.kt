@@ -6,6 +6,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.ServiceCompat
 import com.thermalsentinel.ThermalSentinelApp
 import com.thermalsentinel.engine.AppGraph
@@ -66,18 +67,29 @@ class ThermalMonitorService : Service() {
             val created = buildCoordinator()
             coordinator = created
             serviceScope.launch {
-                val now = System.currentTimeMillis()
-                // Session facts only. The monitoring *intent* was already persisted
-                // by MonitoringController.start() before this service existed, so a
-                // stop issued while this coroutine was queued cannot be undone by a
-                // late start write landing after it.
-                graph.settings.recordSessionStarted(now)
-                graph.history.recordEvent(
-                    timestampMillis = now,
-                    type = ThermalEventType.MONITORING_STARTED,
-                    detail = "Monitoring started from the app."
-                )
-                created.start()
+                try {
+                    // startForegroundService() can be queued just before a user stop.
+                    // Re-read the committed intent before installing listeners or
+                    // recording a session, so a late start cannot undo that stop.
+                    if (!graph.settings.monitoringEnabledNow()) {
+                        Log.i(TAG, "Ignoring stale start request because monitoring is disabled")
+                        stopSelf(startId)
+                        return@launch
+                    }
+                    val now = System.currentTimeMillis()
+                    graph.settings.recordSessionStarted(now)
+                    graph.history.recordEvent(
+                        timestampMillis = now,
+                        type = ThermalEventType.MONITORING_STARTED,
+                        detail = "Monitoring started from the app."
+                    )
+                    created.start()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    Log.e(TAG, "Could not initialize monitoring; stopping fail-closed", failure)
+                    stopSelf(startId)
+                }
             }
         }
         return START_NOT_STICKY
@@ -155,6 +167,7 @@ class ThermalMonitorService : Service() {
     }
 
     companion object {
+        private const val TAG = "ThermalMonitorService"
         const val ACTION_START = "com.thermalsentinel.engine.action.START_MONITORING"
         const val ACTION_STOP = "com.thermalsentinel.engine.action.STOP_MONITORING"
     }

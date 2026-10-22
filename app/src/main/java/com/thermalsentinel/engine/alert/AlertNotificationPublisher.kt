@@ -71,7 +71,8 @@ class AlertNotificationPublisher(private val context: Context) {
     fun buildMonitoringNotification(
         sample: DeviceSample?,
         alertLevel: AlertLevel,
-        updating: Boolean
+        updating: Boolean,
+        useFahrenheit: Boolean = false
     ): Notification {
         val openApp = PendingIntent.getActivity(
             context,
@@ -82,8 +83,9 @@ class AlertNotificationPublisher(private val context: Context) {
 
         val temperature = sample?.battery?.temperatureC?.valueOrNull
         val status = sample?.thermal?.thermalStatus?.valueOrNull
-        val valueText = ThermalFormatting.temperatureCelsius(
+        val valueText = ThermalFormatting.temperature(
             temperature,
+            fahrenheit = useFahrenheit,
             unavailable = context.getString(R.string.widget_temperature_unavailable)
         )
         val statusText = status?.label ?: UNAVAILABLE_STATUS
@@ -128,7 +130,12 @@ class AlertNotificationPublisher(private val context: Context) {
      * threshold quoted in the text is the threshold that actually fired (the
      * charging-specific one while charging, if it is enabled).
      */
-    fun publishAlert(action: AlertAction.Notify, rules: ThermalAlertRules, onExternalPower: Boolean) {
+    fun publishAlert(
+        action: AlertAction.Notify,
+        rules: ThermalAlertRules,
+        onExternalPower: Boolean,
+        useFahrenheit: Boolean = false
+    ) {
         val openApp = PendingIntent.getActivity(
             context,
             REQUEST_OPEN_APP,
@@ -136,7 +143,11 @@ class AlertNotificationPublisher(private val context: Context) {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val temperatureText = ThermalFormatting.temperatureCelsius(action.temperatureC, unavailable = UNAVAILABLE_TEMPERATURE)
+        val temperatureText = ThermalFormatting.temperature(
+            action.temperatureC,
+            fahrenheit = useFahrenheit,
+            unavailable = UNAVAILABLE_TEMPERATURE
+        )
         val title: String
         val text: String
         when (action.trigger) {
@@ -152,7 +163,7 @@ class AlertNotificationPublisher(private val context: Context) {
                 text = context.getString(
                     R.string.alert_warning_text,
                     temperatureText,
-                    ThermalFormatting.temperatureCelsius(rules.effectiveWarningThresholdC(onExternalPower))
+                    ThermalFormatting.temperature(rules.effectiveWarningThresholdC(onExternalPower), fahrenheit = useFahrenheit)
                 )
             }
             AlertTrigger.BATTERY_TEMPERATURE -> {
@@ -161,14 +172,14 @@ class AlertNotificationPublisher(private val context: Context) {
                     text = context.getString(
                         R.string.alert_critical_text,
                         temperatureText,
-                        ThermalFormatting.temperatureCelsius(rules.criticalThresholdC)
+                        ThermalFormatting.temperature(rules.criticalThresholdC, fahrenheit = useFahrenheit)
                     )
                 } else {
                     title = context.getString(R.string.alert_warning_title)
                     text = context.getString(
                         R.string.alert_warning_text,
                         temperatureText,
-                        ThermalFormatting.temperatureCelsius(rules.effectiveWarningThresholdC(onExternalPower))
+                        ThermalFormatting.temperature(rules.effectiveWarningThresholdC(onExternalPower), fahrenheit = useFahrenheit)
                     )
                 }
             }
@@ -189,10 +200,18 @@ class AlertNotificationPublisher(private val context: Context) {
         notifyIfPermitted(ID_ALERT, notification)
     }
 
-    fun publishClearedNotification(action: AlertAction.Cleared, rules: ThermalAlertRules) {
+    fun publishClearedNotification(
+        action: AlertAction.Cleared,
+        rules: ThermalAlertRules,
+        useFahrenheit: Boolean = false
+    ) {
         val text = context.getString(
             R.string.alert_cleared_text,
-            ThermalFormatting.temperatureCelsius(action.temperatureC, unavailable = UNAVAILABLE_TEMPERATURE)
+            ThermalFormatting.temperature(
+                action.temperatureC,
+                fahrenheit = useFahrenheit,
+                unavailable = UNAVAILABLE_TEMPERATURE
+            )
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ALERTS)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)

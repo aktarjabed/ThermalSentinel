@@ -19,6 +19,31 @@ object ThermalFormatting {
         locale: Locale = Locale.getDefault()
     ): String = if (value == null) unavailable else String.format(locale, "%.1f°C", value)
 
+    /** Display conversion only: Room, rules and calculations remain Celsius-based. */
+    fun temperature(
+        valueCelsius: Float?,
+        fahrenheit: Boolean,
+        unavailable: String = UNAVAILABLE_MARKER,
+        locale: Locale = Locale.getDefault()
+    ): String {
+        if (valueCelsius == null) return unavailable
+        val value = if (fahrenheit) celsiusToFahrenheit(valueCelsius) else valueCelsius
+        val unit = if (fahrenheit) "°F" else "°C"
+        return String.format(locale, "%.1f%s", value, unit)
+    }
+
+    fun celsiusToFahrenheit(valueCelsius: Float): Float = valueCelsius * 9f / 5f + 32f
+
+    fun temperatureRate(
+        degreesCelsiusPerMinute: Float,
+        fahrenheit: Boolean,
+        locale: Locale = Locale.getDefault()
+    ): String {
+        val rate = if (fahrenheit) degreesCelsiusPerMinute * 9f / 5f else degreesCelsiusPerMinute
+        val unit = if (fahrenheit) "°F/min" else "°C/min"
+        return String.format(locale, "%.2f %s", rate, unit)
+    }
+
     fun temperatureDeltaCelsius(value: Float?, locale: Locale = Locale.getDefault()): String =
         if (value == null) UNAVAILABLE_MARKER else String.format(locale, "%+.1f°C", value)
 

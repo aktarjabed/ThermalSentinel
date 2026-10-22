@@ -10,6 +10,8 @@ import com.thermalsentinel.engine.data.MonitoringStopReason
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Process-wide visibility of whether the monitoring service is currently alive.
@@ -60,8 +62,16 @@ class MonitoringController(
     private val settings: EngineSettingsRepository
 ) {
     val isRunning: StateFlow<Boolean> = MonitoringStatus.isRunning
+    private val transitionMutex = Mutex()
 
-    suspend fun start(): MonitoringStartResult {
+
+    suspend fun start(): MonitoringStartResult = transitionMutex.withLock { startLocked() }
+
+    private suspend fun startLocked(): MonitoringStartResult {
+        if (MonitoringStatus.isRunning.value) {
+            settings.setMonitoringEnabled(true)
+            return MonitoringStartResult.Started
+        }
         // Recorded before the service is asked to start, so a stop that arrives
         // while the start is in flight can never be undone by it.
         settings.setMonitoringEnabled(true)
@@ -87,6 +97,7 @@ class MonitoringController(
             Log.w(TAG, "Foreground service start threw an unexpected error", unexpected)
             abandonStart("Monitoring could not start: ${unexpected.message ?: "unexpected platform error"}")
         }
+    
     }
 
     /**
@@ -109,7 +120,7 @@ class MonitoringController(
      * value its transaction just committed, so the ordering is guaranteed rather
      * than racy.
      */
-    suspend fun stop() {
+    suspend fun stop() = transitionMutex.withLock {
         settings.recordMonitoringStopped(System.currentTimeMillis(), MonitoringStopReason.USER_REQUEST)
         context.stopService(Intent(context, ThermalMonitorService::class.java))
     }
@@ -119,10 +130,10 @@ class MonitoringController(
      * user previously asked for monitoring, so the app never decides on its own
      * to start a persistent service.
      */
-    suspend fun resumeIfRequested(): MonitoringStartResult? {
-        if (MonitoringStatus.isRunning.value) return null
-        if (!settings.monitoringEnabledNow()) return null
-        return start()
+    suspend fun resumeIfRequested(): MonitoringStartResult? = transitionMutex.withLock {
+        if (MonitoringStatus.isRunning.value) null
+        else if (!settings.monitoringEnabledNow()) null
+        else startLocked()
     }
 
     companion object {

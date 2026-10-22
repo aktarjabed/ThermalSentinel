@@ -41,6 +41,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,6 +58,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.thermalsentinel.BuildConfig
+import com.thermalsentinel.ThermalSentinelApp
+import com.thermalsentinel.ui.data.LocalUseFahrenheit
 import com.thermalsentinel.ui.data.AccentPreset
 import com.thermalsentinel.ui.data.ThemeMode
 import com.thermalsentinel.ui.data.UiPreferences
@@ -245,6 +248,8 @@ private fun ThermalSentinelRoot(
     onAmoledChanged: (Boolean) -> Unit,
     onAccentChanged: (String) -> Unit
 ) {
+    val app = LocalContext.current.applicationContext as ThermalSentinelApp
+    val useFahrenheit by app.graph.settings.useFahrenheit.collectAsStateWithLifecycle(initialValue = false)
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -312,15 +317,17 @@ private fun ThermalSentinelRoot(
                 }
             }
         ) { paddingValues ->
-            AppNavHost(
-                navController = navController,
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
-                preferences = preferences,
-                onThemeChanged = onThemeChanged,
-                onDynamicColorChanged = onDynamicColorChanged,
-                onAmoledChanged = onAmoledChanged,
-                onAccentChanged = onAccentChanged
-            )
+            CompositionLocalProvider(LocalUseFahrenheit provides useFahrenheit) {
+                AppNavHost(
+                    navController = navController,
+                    modifier = Modifier.fillMaxSize().padding(paddingValues),
+                    preferences = preferences,
+                    onThemeChanged = onThemeChanged,
+                    onDynamicColorChanged = onDynamicColorChanged,
+                    onAmoledChanged = onAmoledChanged,
+                    onAccentChanged = onAccentChanged
+                )
+            }
         }
     }
 }

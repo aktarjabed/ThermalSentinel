@@ -17,6 +17,7 @@ import com.thermalsentinel.engine.monitoring.RetentionPolicy
 import com.thermalsentinel.engine.monitoring.SamplingPolicy
 import com.thermalsentinel.engine.export.ExportOutcome
 import com.thermalsentinel.engine.export.ExportResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -77,6 +78,9 @@ class ThermalViewModel(application: Application) : HistoryReadingViewModel(appli
     private val _events = MutableStateFlow<List<ThermalEventSummary>>(emptyList())
     val events: StateFlow<List<ThermalEventSummary>> = _events.asStateFlow()
 
+    private val _forecast = MutableStateFlow<HistoryMath.ThresholdForecast?>(null)
+    val forecast: StateFlow<HistoryMath.ThresholdForecast?> = _forecast.asStateFlow()
+
     val rules: StateFlow<ThermalAlertRules> = graph.settings.rules.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -91,13 +95,15 @@ class ThermalViewModel(application: Application) : HistoryReadingViewModel(appli
     suspend fun refresh() {
         val now = System.currentTimeMillis()
         _series.value = graph.history.series24h(now)
+        val activeThreshold = rules.value.effectiveWarningThresholdC(
+            latestSample.value?.battery?.onExternalPower == true
+        )
         _statistics.value = graph.history.statistics(
             windowMillis = HistoryRange.DAY.windowMillis,
-            warningThresholdC = rules.value.effectiveWarningThresholdC(
-                latestSample.value?.battery?.onExternalPower == true
-            ),
+            warningThresholdC = activeThreshold,
             nowMillis = now
         )
+        _forecast.value = HistoryMath.forecastToThreshold(_series.value, activeThreshold)
         _events.value = graph.history.recentEvents(limit = 12)
     }
 
@@ -151,6 +157,15 @@ class HistoryViewModel(application: Application) : HistoryReadingViewModel(appli
     private val _exportState = MutableStateFlow<ExportOutcome?>(null)
     val exportState: StateFlow<ExportOutcome?> = _exportState.asStateFlow()
 
+    private val _exportInProgress = MutableStateFlow(false)
+    val exportInProgress: StateFlow<Boolean> = _exportInProgress.asStateFlow()
+
+    private val _clearInProgress = MutableStateFlow(false)
+    val clearInProgress: StateFlow<Boolean> = _clearInProgress.asStateFlow()
+
+    private val _clearMessage = MutableStateFlow<String?>(null)
+    val clearMessage: StateFlow<String?> = _clearMessage.asStateFlow()
+
     val rules: StateFlow<ThermalAlertRules> = graph.settings.rules.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -184,23 +199,56 @@ class HistoryViewModel(application: Application) : HistoryReadingViewModel(appli
         _sessions.value = graph.history.chargingSessions(limit = 6)
     }
 
-    fun exportCsv() {
+    fun exportCsv() = startExport(graph.exporter::exportSamplesCsv)
+
+    fun exportJson() = startExport(graph.exporter::exportSamplesJson)
+
+    fun exportPdf() = startExport(graph.exporter::exportSamplesPdf)
+
+    /** Ignore repeated taps while history is read, rendered, or written. */
+    private fun startExport(export: suspend (Long) -> ExportOutcome) {
+        if (_exportInProgress.value) return
+        _exportInProgress.value = true
+        _exportState.value = null
         viewModelScope.launch {
-            _exportState.value = graph.exporter.exportSamplesCsv(_range.value.windowMillis)
+            try {
+                _exportState.value = export(_range.value.windowMillis)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                _exportState.value = ExportOutcome.Failure(
+                    "The export could not be completed. Check available storage and try again."
+                )
+            } finally {
+                _exportInProgress.value = false
+            }
         }
     }
 
-    fun exportJson() {
+    /** Deletes all stored history atomically; user preferences and alert rules remain. */
+    fun clearHistory() {
+        if (_clearInProgress.value) return
+        _clearInProgress.value = true
+        _clearMessage.value = null
         viewModelScope.launch {
-            _exportState.value = graph.exporter.exportSamplesJson(_range.value.windowMillis)
+            try {
+                graph.history.clearHistory()
+                refresh()
+                _clearMessage.value = "Thermal history cleared. Monitoring preferences and alert rules were kept."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                _clearMessage.value = "Could not clear thermal history. Please try again."
+            } finally {
+                _clearInProgress.value = false
+            }
         }
     }
 
-    fun exportPdf() {
-        viewModelScope.launch {
-            _exportState.value = graph.exporter.exportSamplesPdf(_range.value.windowMillis)
-        }
+    fun dismissClearMessage() {
+        _clearMessage.value = null
     }
+
 
     /**
      * Gap threshold for the chart. Three screen-off intervals is the same limit

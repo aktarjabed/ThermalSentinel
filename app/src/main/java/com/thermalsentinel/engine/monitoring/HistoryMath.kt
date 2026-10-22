@@ -24,6 +24,13 @@ object HistoryMath {
         val valued: List<SeriesPoint> get() = points.filter { it.temperatureC != null }
     }
 
+    /** A conservative short-term linear projection toward a configured threshold. */
+    data class ThresholdForecast(
+        val slopeCPerMinute: Float,
+        /** Zero means the fitted current temperature is already at/above the threshold. */
+        val minutesToThreshold: Float
+    )
+
     const val HEATING_RATE_C_PER_MINUTE = 0.4f
     const val COOLING_RATE_C_PER_MINUTE = -0.4f
 
@@ -97,59 +104,96 @@ object HistoryMath {
     }
 
     /**
-     * Temperature change per minute across the requested window, as a
-     * least-squares slope over **every** measured point inside it.
-     *
-     * Not an endpoint slope. The engine's claim is "this device is heating", and a
-     * two-point answer makes that claim depend entirely on which two samples
-     * happened to open and close the window: one noisy reading at either end, or
-     * one sample arriving late, flips the sign of the trend without the device
-     * having done anything. Fitting the whole window spends the same evidence on a
-     * verdict that interior samples can also contradict.
-     *
-     * Returns null when there is not enough evidence: fewer than
-     * [MIN_POINTS_FOR_RATE] measured points in the window, or a fitted span
-     * shorter than [MIN_RATE_WINDOW_MILLIS]. A single pair of samples is not a
-     * trend, and neither is a window too short to average anything over.
+     * Temperature change per minute across the requested window, as a least-squares fit
+     * over the measured points in that time window. A pair of readings is not enough to
+     * call a trend; require multiple readings and a minimum elapsed span.
      */
     fun riseRateCPerMinute(points: List<SeriesPoint>, windowMillis: Long): Float? {
         if (windowMillis < MIN_RATE_WINDOW_MILLIS) return null
-        val newest = points.filter { it.temperatureC != null }
-            .maxOfOrNull { it.timestampMillis }
-            ?: return null
-        val cutoff = newest - windowMillis
-        val valued = points
-            .filter { it.temperatureC != null && it.timestampMillis >= cutoff }
-            .sortedBy { it.timestampMillis }
+        val valued = measuredPointsInWindow(points, windowMillis)
         if (valued.size < MIN_POINTS_FOR_RATE) return null
-        if (newest - valued.first().timestampMillis < MIN_RATE_WINDOW_MILLIS) return null
+        if (valued.last().timestampMillis - valued.first().timestampMillis < MIN_RATE_WINDOW_MILLIS) return null
+        return fitLine(valued)?.slopeCPerMinute?.toFloat()
+    }
 
-        // Times are normalised to minutes relative to the first point of the fit.
-        // Absolute epoch milliseconds in a double-precision sum of squares lose the
-        // digits that decide a slope of 0.4 °C/min.
-        val startTimeMillis = valued.first().timestampMillis
-        val samples = valued.mapNotNull { point ->
-            val value = point.temperatureC ?: return@mapNotNull null
-            ((point.timestampMillis - startTimeMillis) / 60_000.0) to value.toDouble()
+    /**
+     * Short-term estimate of minutes until the fitted temperature reaches [thresholdC].
+     * Missing, non-finite, duplicate-time or insufficient readings never produce an ETA.
+     * A flat/falling trend is not extrapolated into a future alert.
+     */
+    fun forecastToThreshold(
+        points: List<SeriesPoint>,
+        thresholdC: Float,
+        windowMillis: Long = 10 * 60_000L,
+        minPoints: Int = 4,
+        minSpanMillis: Long = 60_000L,
+        risingSlopeCPerMinute: Float = 0.02f
+    ): ThresholdForecast? {
+        if (!thresholdC.isFinite() || !risingSlopeCPerMinute.isFinite()) return null
+        if (windowMillis <= 0L || minPoints < 2 || minSpanMillis < 0L || risingSlopeCPerMinute < 0f) return null
+        val valued = measuredPointsInWindow(points, windowMillis)
+        if (valued.size < minPoints) return null
+        if (valued.last().timestampMillis - valued.first().timestampMillis < minSpanMillis) return null
+
+        val fit = fitLine(valued) ?: return null
+        val minutes = when {
+            fit.fittedAtLatestC >= thresholdC.toDouble() -> 0.0
+            fit.slopeCPerMinute < risingSlopeCPerMinute.toDouble() -> return null
+            else -> (thresholdC.toDouble() - fit.fittedAtLatestC) / fit.slopeCPerMinute
         }
+        if (!minutes.isFinite() || minutes < 0.0 || minutes > Float.MAX_VALUE) return null
+        return ThresholdForecast(fit.slopeCPerMinute.toFloat(), minutes.toFloat())
+    }
+
+    private data class LinearFit(
+        val slopeCPerMinute: Double,
+        val fittedAtLatestC: Double
+    )
+
+    private fun measuredPointsInWindow(
+        points: List<SeriesPoint>,
+        windowMillis: Long
+    ): List<SeriesPoint> {
+        if (windowMillis <= 0L) return emptyList()
+        val valid = points.filter { point ->
+            point.timestampMillis >= 0L && point.temperatureC?.isFinite() == true
+        }.sortedBy { it.timestampMillis }
+        val newest = valid.lastOrNull()?.timestampMillis ?: return emptyList()
+        val cutoff = newest - windowMillis
+        return valid.filter { it.timestampMillis >= cutoff }
+    }
+
+    /** Shared regression prevents the event trend and user-facing forecast from diverging. */
+    private fun fitLine(points: List<SeriesPoint>): LinearFit? {
+        val samples = points.mapNotNull { point ->
+            val temperature = point.temperatureC ?: return@mapNotNull null
+            if (!temperature.isFinite()) return@mapNotNull null
+            point.timestampMillis to temperature.toDouble()
+        }.sortedBy { it.first }
+        if (samples.size < 2) return null
+
+        val startTimeMillis = samples.first().first
+        val xs = samples.map { (timestamp, _) -> (timestamp - startTimeMillis) / 60_000.0 }
+        val ys = samples.map { (_, temperature) -> temperature }
         var sumX = 0.0
         var sumY = 0.0
         var sumXY = 0.0
         var sumXX = 0.0
-        for ((x, y) in samples) {
+        for (index in xs.indices) {
+            val x = xs[index]
+            val y = ys[index]
             sumX += x
             sumY += y
             sumXY += x * y
             sumXX += x * x
         }
-        val n = samples.size.toDouble()
-        // The variance term, which is zero exactly when every point shares one
-        // timestamp. Tested with `<=` rather than `==`: a sum of squares can only
-        // reach zero from rounding as well, and a slope fitted against no time axis
-        // is not a number worth returning.
+        val n = xs.size.toDouble()
         val denominator = n * sumXX - sumX * sumX
-        if (denominator <= 0.0) return null
-        return ((n * sumXY - sumX * sumY) / denominator).toFloat()
+        if (!denominator.isFinite() || denominator <= 0.0) return null
+        val slope = (n * sumXY - sumX * sumY) / denominator
+        val fittedLatest = (sumY / n) + slope * ((xs.last()) - (sumX / n))
+        if (!slope.isFinite() || !fittedLatest.isFinite()) return null
+        return LinearFit(slopeCPerMinute = slope, fittedAtLatestC = fittedLatest)
     }
 
     /** Rate classification used to write heating/cooling events. */

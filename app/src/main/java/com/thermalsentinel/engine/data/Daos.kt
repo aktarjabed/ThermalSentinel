@@ -26,6 +26,16 @@ interface ThermalSampleDao {
     @Query("SELECT * FROM thermal_samples WHERE timestampMillis >= :fromMillis ORDER BY timestampMillis ASC")
     suspend fun since(fromMillis: Long): List<ThermalSampleEntity>
 
+    /**
+     * Bounded query for user-facing exports only. The time-series/rate detectors
+     * must continue using [since], because a row cap there would distort a time window.
+     */
+    @Query(
+        "SELECT * FROM thermal_samples WHERE timestampMillis >= :fromMillis " +
+            "ORDER BY timestampMillis ASC LIMIT :limit"
+    )
+    suspend fun sinceForExport(fromMillis: Long, limit: Int): List<ThermalSampleEntity>
+
     @Query("SELECT * FROM thermal_samples WHERE timestampMillis < :beforeMillis ORDER BY timestampMillis ASC")
     suspend fun before(beforeMillis: Long): List<ThermalSampleEntity>
 
@@ -37,6 +47,9 @@ interface ThermalSampleDao {
 
     @Query("SELECT COUNT(*) FROM thermal_samples")
     suspend fun count(): Long
+
+    @Query("DELETE FROM thermal_samples")
+    suspend fun deleteAll(): Int
 
     @Query("SELECT COUNT(*) FROM thermal_samples WHERE timestampMillis >= :fromMillis")
     suspend fun countSince(fromMillis: Long): Long
@@ -69,6 +82,9 @@ interface ThermalAggregateDao {
     @Query("SELECT COUNT(*) FROM thermal_aggregates WHERE bucketMillis = :bucketMillis")
     suspend fun count(bucketMillis: Long): Long
 
+    @Query("DELETE FROM thermal_aggregates")
+    suspend fun deleteAll(): Int
+
     @Query("DELETE FROM thermal_aggregates WHERE bucketMillis = :bucketMillis AND bucketStartMillis < :beforeMillis")
     suspend fun deleteBefore(bucketMillis: Long, beforeMillis: Long): Int
 }
@@ -93,6 +109,9 @@ interface ThermalEventDao {
 
     @Query("SELECT COUNT(*) FROM thermal_events")
     suspend fun count(): Long
+
+    @Query("DELETE FROM thermal_events")
+    suspend fun deleteAll(): Int
 
     @Query("SELECT COUNT(*) FROM thermal_events WHERE timestampMillis >= :fromMillis")
     suspend fun countSince(fromMillis: Long): Long
@@ -121,6 +140,9 @@ interface ChargingSessionDao {
 
     @Query("SELECT COUNT(*) FROM charging_sessions")
     suspend fun count(): Long
+
+    @Query("DELETE FROM charging_sessions")
+    suspend fun deleteAll(): Int
 
     @Query("DELETE FROM charging_sessions WHERE endMillis IS NOT NULL AND endMillis < :beforeMillis")
     suspend fun deleteClosedBefore(beforeMillis: Long): Int

@@ -34,16 +34,16 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Area | Status |
 |---|---|
 | Monitoring foreground service (`specialUse`, `START_NOT_STICKY`, user-started only) | Implemented |
-| Adaptive sampling (5–90 s by state) with a stated reason for every interval | Implemented |
+| Adaptive sampling with configurable 15/30/60/120 s active-screen baseline and adaptive event states | Implemented |
 | Battery collector (sticky broadcast + `BatteryManager` properties, API-gated extras) | Implemented |
 | Thermal collector (status listener; shared headroom read limited to once per 10 s) | Implemented |
 | Room v1 history: raw / hourly / daily retention ladder, charging sessions, event timeline | Implemented |
 | Alert engine: NORMAL / WARNING / CRITICAL / RECOVERY, hysteresis, cooldown, charging rule, platform-status bands | Implemented |
 | Alert + ongoing notifications, two channels, permission-aware, `POST_NOTIFICATIONS` requested once per install | Implemented |
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
-| CSV and versioned JSON export through the app cache and the system share sheet | Implemented |
+| CSV, versioned JSON and PDF export through the app cache and the system share sheet (50,000-row CSV/JSON cap; 10,000-row PDF cap) | Implemented |
 | Glance home-screen widget, pushed on new samples (≤1/min) | Implemented |
-| DataStore-persisted alert rules, monitoring intent and widget style | Implemented |
+| DataStore-persisted alert rules, monitoring intent, sampling preference, temperature unit and optional background logging | Implemented |
 | Appearance preferences (theme, dynamic colour, AMOLED, accent) | Implemented |
 
 ## What is **not** in this build
@@ -53,9 +53,9 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Network Protection: local VPN, per-app policy, traffic attribution | Not implemented — the screens say so; no `VpnService` exists |
 | DNS Protection: resolvers, blocklists, attribution | Not implemented |
 | Privacy Monitor, App Activity, Security Timeline, Security Scanner | Not implemented |
-| Reports: JSON, PDF, combined diagnostic bundle | Not implemented (CSV export of thermal samples is) |
+| Combined diagnostic bundle, security/privacy reports | Not implemented; thermal CSV, versioned JSON and PDF are implemented |
 | Quick Access settings intents | Rows are disabled and labelled |
-| Boot-time start of monitoring | Deliberately absent; monitoring resumes when the app is opened |
+| Boot-time start of continuous monitoring | Deliberately absent; optional periodic history logging may be rescheduled by WorkManager but never starts the foreground service |
 | Brightness control, app force-stop, thermal-engine overrides | Deliberately absent, permanently |
 
 ## Honesty rules the code enforces
@@ -123,20 +123,24 @@ Per-screen status is in [`UI_FEATURE_MATRIX.md`](UI_FEATURE_MATRIX.md).
 
 ### Tests
 
-**104 JVM unit tests** (15 UI contract tests + 89 engine tests):
+**121 JVM unit tests** (15 UI contract tests + 106 engine tests):
 
 | Class | Tests | Covers |
 |---|---|---|
 | `AlertEngineTest` | 18 | Escalation, jump to critical, explicit recovery phase, hysteresis hold, cooldown vs. escalation, reminders, cleared-is-always-announced, ending an alert cancels the visible notification once, absent-data hold, status bands, charging rule, storage round-trip, `since` tracking |
 | `ThermalAlertRulesTest` | 9 | Every `RuleViolation`, `clamped()` validity, charging thresholds, lowest triggered band |
 | `PlatformValuesTest` | 14 | Unsupported sentinels, valid zero temperature/current/cycle counts, voltage and percent bounds, `NaN` headroom, unknown status levels |
-| `SamplingPolicyTest` | 12 | Branch priority, charging vs. low battery, recovery cadence, unknown status is not elevated, 5 s floor |
+| `SamplingPolicyTest` | 15 | Branch priority, configurable 15/30/60/120 s baseline, charging/screen-off/low-battery adaptation, recovery cadence, 5 s floor |
 | `ThermalHeadroomReadLimiterTest` | 4 | First read, 10 s minimum interval, exact boundary, backwards-clock fail-closed behavior |
 | `HistoryMathTest` | 13 | Segment splitting, holes, min/max/avg over present values only, threshold time, least-squares rate fit (interior points used, out-of-window samples ignored, no time axis or a span under 3 min → no rate) |
 | `ReadingTest` | 6 | `Present`/`Absent` semantics, covariance, labels |
+| `ThermalFormattingTest` | 3 | Celsius/Fahrenheit conversion, absent values, rate conversion without offset |
 | `ThermalCsvTest` | 6 | Header contract, empty fields for absent values, locale-independent decimals, quoting, timestamps |
+| `ThermalJsonTest` | 3 | Versioned JSON structure, absent fields as null, escaping and non-finite-number normalization |
 | `SampleMappersTest` | 3 | Real zero temperature, explicit absent-value round-trip, enums and sampling metadata |
 | `RetentionPolicyTest` | 4 | Bucket alignment, cut-offs, ladder ordering, divide-by-zero guard |
+| `ThermalForecastTest` | 5 | Rising-trend ETA, threshold already reached, flat/falling trend, missing/non-finite/insufficient points, duplicate timestamps |
+| `BackgroundLoggingPolicyTest` | 3 | Skip while monitoring is active, skip recent readings, allow stale/missing data, fail closed on future timestamps |
 | `EngineContractParsingTest`, `UiPreferencesParsingTest`, `RouteContractTest` | 15 | Storage-value round trips, fallbacks, routes ↔ drawer consistency |
 
 **2 instrumented smoke tests** (`NavigationSmokeTest`, need a device or emulator):
@@ -193,6 +197,13 @@ user can open the app to retry.
 Device/OEM validation is still required; CI cannot prove Quick Settings behavior or
 foreground-service policy on every Android build.
 
+
+## Optional background logging
+
+Light background logging is opt-in and scheduled at a 15-minute minimum interval. It
+records a history sample only when continuous monitoring is off and no recent sample
+exists. It does not publish alerts, poll thermal headroom, or start a foreground service.
+Android may defer scheduled work under Doze and battery constraints.
 
 ## Structured JSON export
 

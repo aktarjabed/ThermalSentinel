@@ -8,7 +8,10 @@ import com.thermalsentinel.engine.alert.AlertLevel
 import com.thermalsentinel.engine.alert.AlertState
 import com.thermalsentinel.engine.data.MonitoringStopReason
 import com.thermalsentinel.engine.domain.DeviceSample
+import com.thermalsentinel.engine.data.EngineSettingsRepository
+import com.thermalsentinel.engine.monitoring.BackgroundLoggingScheduler
 import com.thermalsentinel.engine.service.MonitoringStartResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +42,20 @@ class MonitoringViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     val serviceRunning: StateFlow<Boolean> = graph.monitoring.isRunning
+
+    val preferredSamplingIntervalSeconds: StateFlow<Int> =
+        graph.settings.preferredSamplingIntervalSeconds.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            EngineSettingsRepository.DEFAULT_SAMPLING_INTERVAL_SECONDS
+        )
+    val backgroundLoggingEnabled: StateFlow<Boolean> =
+        graph.settings.backgroundLoggingEnabled.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000), false
+        )
+    val useFahrenheit: StateFlow<Boolean> =
+        graph.settings.useFahrenheit.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000), false
+        )
 
     val latestSample: StateFlow<DeviceSample?> = graph.history.latestSample
 
@@ -72,44 +89,76 @@ class MonitoringViewModel(application: Application) : AndroidViewModel(applicati
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
-    fun startMonitoring() {
-        if (_busy.value) return
-        _busy.value = true
+    fun startMonitoring() = runControl {
+        when (val result = graph.monitoring.start()) {
+            MonitoringStartResult.Started -> _message.value = null
+            is MonitoringStartResult.Rejected -> _message.value = result.message
+        }
+    }
+
+    fun stopMonitoring() = runControl {
+        graph.monitoring.stop()
+        _message.value = "Monitoring stopped. Stored history is kept."
+    }
+
+    /** Resume only if the user previously enabled monitoring. */
+    fun resumeIfRequested() = runControl {
+        when (val result = graph.monitoring.resumeIfRequested()) {
+            null, MonitoringStartResult.Started -> Unit
+            is MonitoringStartResult.Rejected -> _message.value = result.message
+        }
+    }
+
+    fun refreshNow() = runControl {
+        graph.history.loadLatest()
+        _message.value = "Reloaded the last stored reading."
+    }
+
+    fun setPreferredSamplingIntervalSeconds(seconds: Int) {
+        if (seconds !in EngineSettingsRepository.SUPPORTED_SAMPLING_INTERVAL_SECONDS) return
         viewModelScope.launch {
-            when (val result = graph.monitoring.start()) {
-                is MonitoringStartResult.Started -> _message.value = null
-                is MonitoringStartResult.Rejected -> _message.value = result.message
+            graph.settings.setPreferredSamplingIntervalSeconds(seconds)
+            _message.value = "Sampling preference saved. Adaptive event states still use faster cadence."
+        }
+    }
+
+    fun setUseFahrenheit(enabled: Boolean) {
+        viewModelScope.launch { graph.settings.setUseFahrenheit(enabled) }
+    }
+
+    fun setBackgroundLoggingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                graph.settings.setBackgroundLoggingEnabled(enabled)
+                val persisted = graph.settings.backgroundLoggingEnabledNow()
+                BackgroundLoggingScheduler.sync(getApplication(), persisted)
+                _message.value = when {
+                    persisted != enabled -> "The background logging preference could not be saved."
+                    enabled -> "Light background logging enabled; Android may defer scheduled samples."
+                    else -> "Light background logging disabled."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                _message.value = "Could not update background logging. Open Diagnostics and try again."
             }
-            _busy.value = false
         }
     }
 
-    fun stopMonitoring() {
+    /** Fences rapid repeated UI actions and always restores the busy state after a failure. */
+    private fun runControl(action: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            graph.monitoring.stop()
-            _message.value = "Monitoring stopped. Stored history is kept."
-            _busy.value = false
-        }
-    }
-
-    /**
-     * Called from a visible screen. Only starts the service if the user had
-     * enabled monitoring before, so the app never starts a persistent service on
-     * its own initiative.
-     */
-    fun resumeIfRequested() {
-        viewModelScope.launch {
-            val result = graph.monitoring.resumeIfRequested() ?: return@launch
-            if (result is MonitoringStartResult.Rejected) _message.value = result.message
-        }
-    }
-
-    fun refreshNow() {
-        viewModelScope.launch {
-            graph.history.loadLatest()
-            _message.value = "Reloaded the last stored reading."
+            try {
+                action()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                _message.value = "The monitoring action failed. Open Diagnostics and try again."
+            } finally {
+                _busy.value = false
+            }
         }
     }
 

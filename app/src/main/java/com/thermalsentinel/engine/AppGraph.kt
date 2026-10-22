@@ -8,6 +8,7 @@ import com.thermalsentinel.engine.data.EngineSettingsRepository
 import com.thermalsentinel.engine.data.ThermalHistoryRepository
 import com.thermalsentinel.engine.diagnostics.DiagnosticsEngine
 import com.thermalsentinel.engine.export.ThermalExportService
+import com.thermalsentinel.engine.monitoring.BackgroundLoggingScheduler
 import com.thermalsentinel.engine.service.MonitoringController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,7 @@ class AppGraph(context: Context) {
             notifications.ensureChannels()
             history.loadLatest()
             history.runMaintenanceIfDue()
+            BackgroundLoggingScheduler.sync(appContext, settings.backgroundLoggingEnabledNow())
         }
     }
 }

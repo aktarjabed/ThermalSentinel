@@ -16,10 +16,10 @@ Status vocabulary:
 | Screen | Feature surface | Status in this build | Notes |
 |---|---|---|---|
 | Dashboard | Monitoring control + latest thermal/battery sample + Quick Access | Live (partial) | Live: start/stop/resume, alert state, latest sample, freshness. Placeholders: "Risk snapshot" rows report that the correlation engine does not exist yet; network/security rows state "not implemented". |
-| Thermal Monitor | Battery temperature, platform thermal status, headroom, 24 h trend, recorded events, active rules | Live | Temperature, status and headroom come from the collectors; the chart draws raw samples and shows gaps as gaps; events are read from the local event table. |
+| Thermal Monitor | Battery temperature, platform thermal status, headroom, 24 h trend, time-to-warning estimate, recorded events, active rules | Live | Temperature, status and headroom come from the collectors; the chart draws raw samples and shows gaps as gaps; events are read from the local event table. |
 | Battery & Charging | Charge, voltage, current, health, cycle count, capacity level, charging sessions | Live | Unsupported platform values render their absence reason ("Unavailable on this device") rather than `0`. |
 | Alert Rules | Warning/critical thresholds, hysteresis, cooldown, charging rule, platform bands | Live | Rules are persisted in DataStore and evaluated by the running engine; invalid combinations are clamped and explained. |
-| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON + PDF export | Live | Exports contain raw samples only; PDF is paginated, JSON is schema-versioned and absent values are null. Longer ranges read compacted buckets and are labelled as averages; time above threshold is not estimated from aggregates. |
+| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON + PDF export + clear history | Live | Exports contain raw samples only; PDF is paginated, JSON is schema-versioned and absent values are null. Longer ranges read compacted buckets and are labelled as averages; time above threshold is not estimated from aggregates. |
 | Network Protection | VPN lifecycle, traffic visibility, per-app policy | UI only | No `VpnService` exists. The screen states that protection is off. |
 | Firewall Rules | Precedence, category rules, explicit override | UI only | — |
 | DNS Protection | Resolver state, blocklists, cache/attribution | UI only | No DNS engine, no `VpnService`. |
@@ -30,7 +30,7 @@ Status vocabulary:
 | Reports & Export | Thermal history CSV + JSON + PDF | Live (partial) | All three formats export raw samples through the app cache and system share sheet. A combined diagnostic bundle and security/privacy report engines remain unimplemented. |
 | Quick Access | Battery/network/display settings intents | UI only | Rows are disabled and label the intent they will use. |
 | Diagnostics | Runtime readiness checks | Live | 11 checks; "cannot be verified" (for OEM background limits) is reported as `UNKNOWN`, never as a pass. |
-| Settings | Appearance preferences + engine position | Live | Theme mode, dynamic colour, AMOLED and accent are persisted in DataStore. Monitoring thresholds live on Alert Rules. |
+| Settings | Appearance, selectable sampling and optional background logger | Live (partial) | Theme mode, dynamic colour, AMOLED/accent, 15/30/60/120 s sampling baseline and opt-in 15-minute-or-later history logging are persisted. Background logging never starts foreground monitoring. Alert thresholds live on Alert Rules. |
 | Widgets | SYSTEM / THEMED / TRANSPARENT variants | Live | A real Glance provider reads the same local history; the selected style is persisted and applied. The widget says "monitoring is off" rather than showing a stale temperature. |
 | About | Product principles, monetisation position, build metadata | Static | Version comes from `BuildConfig`. |
 
@@ -39,9 +39,10 @@ Status vocabulary:
 | Component | Status | Notes |
 |---|---|---|
 | Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |
+| Light background logger | Live (opt-in) | Unique WorkManager periodic work; skips while monitoring is running or a recent sample exists; never claims real-time alert monitoring. |
 | Local history database | Live | Room v1 with a 7 d / 90 d / 400 d retention ladder; no destructive migration. |
 | Alert notifications | Live | Two channels; monitoring continues when notifications are blocked, and Diagnostics says the notification is hidden. |
-| CSV + JSON export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null. The window is clamped to raw retention and the result says so. |
+| CSV + JSON + PDF export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null; CSV/JSON are capped at 50,000 rows and PDF at 10,000 rows before rendering to bound memory use. The window is clamped to raw retention and the result says so. |
 | Cloud sync, analytics, accounts | Not present | Not implemented by design, not merely disabled. |
 
 
