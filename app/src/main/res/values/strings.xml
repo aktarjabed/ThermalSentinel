@@ -81,4 +81,5 @@
     <!-- Export -->
     <string name="export_share_title">Share thermal history</string>
     <string name="export_csv_subject">Thermal Sentinel CSV export</string>
+    <string name="export_json_subject">Thermal Sentinel JSON export</string>
 </resources>
