@@ -19,7 +19,7 @@ Status vocabulary:
 | Thermal Monitor | Battery temperature, platform thermal status, headroom, 24 h trend, recorded events, active rules | Live | Temperature, status and headroom come from the collectors; the chart draws raw samples and shows gaps as gaps; events are read from the local event table. |
 | Battery & Charging | Charge, voltage, current, health, cycle count, capacity level, charging sessions | Live | Unsupported platform values render their absence reason ("Unavailable on this device") rather than `0`. |
 | Alert Rules | Warning/critical thresholds, hysteresis, cooldown, charging rule, platform bands | Live | Rules are persisted in DataStore and evaluated by the running engine; invalid combinations are clamped and explained. |
-| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON export | Live | Export includes raw samples only; longer ranges read compacted buckets and are labelled as averages. JSON is schema-versioned; absent values are null. Time above threshold is not estimated from aggregate buckets. |
+| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON + PDF export | Live | Exports contain raw samples only; PDF is paginated, JSON is schema-versioned and absent values are null. Longer ranges read compacted buckets and are labelled as averages; time above threshold is not estimated from aggregates. |
 | Network Protection | VPN lifecycle, traffic visibility, per-app policy | UI only | No `VpnService` exists. The screen states that protection is off. |
 | Firewall Rules | Precedence, category rules, explicit override | UI only | — |
 | DNS Protection | Resolver state, blocklists, cache/attribution | UI only | No DNS engine, no `VpnService`. |
@@ -27,7 +27,7 @@ Status vocabulary:
 | App Activity | Package inventory, risk state, activity correlation | UI only | — |
 | Security Scanner | Evidence, confidence, risk assessment | UI only | — |
 | Security Timeline | Correlated local event stream | UI only | The thermal event timeline is real and lives on Thermal Monitor. |
-| Reports & Export | Thermal history CSV + JSON | Live (partial) | CSV and versioned JSON export raw samples through the app cache and system share sheet. PDF and the combined diagnostic bundle remain unimplemented; security/privacy report surfaces are not active engines. |
+| Reports & Export | Thermal history CSV + JSON + PDF | Live (partial) | All three formats export raw samples through the app cache and system share sheet. A combined diagnostic bundle and security/privacy report engines remain unimplemented. |
 | Quick Access | Battery/network/display settings intents | UI only | Rows are disabled and label the intent they will use. |
 | Diagnostics | Runtime readiness checks | Live | 11 checks; "cannot be verified" (for OEM background limits) is reported as `UNKNOWN`, never as a pass. |
 | Settings | Appearance preferences + engine position | Live | Theme mode, dynamic colour, AMOLED and accent are persisted in DataStore. Monitoring thresholds live on Alert Rules. |
