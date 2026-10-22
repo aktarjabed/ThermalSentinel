@@ -92,8 +92,7 @@ class MonitoringCoordinator(
                 batteryCollector.start()
                 thermalCollector.start()
             } catch (failure: Exception) {
-                batteryCollector.stop()
-                thermalCollector.stop()
+                stopCollectorsSafely()
                 throw failure
             }
             val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -106,12 +105,11 @@ class MonitoringCoordinator(
                         restartRequestedAfterCancellation = false
                         requested
                     }
-                    batteryCollector.stop()
-                    thermalCollector.stop()
+                    stopCollectorsSafely()
                     if (restart) {
                         start()
                     } else {
-                        publisher.cancelMonitoringNotification()
+                        cancelMonitoringNotificationSafely()
                     }
                 }
             }
@@ -125,9 +123,23 @@ class MonitoringCoordinator(
         synchronized(lifecycleLock) {
             restartRequestedAfterCancellation = false
             loopJob?.cancel()
-            batteryCollector.stop()
-            thermalCollector.stop()
-            publisher.cancelMonitoringNotification()
+            stopCollectorsSafely()
+            cancelMonitoringNotificationSafely()
+        }
+    }
+
+    private fun stopCollectorsSafely() {
+        runCatching { batteryCollector.stop() }.onFailure {
+            Log.w(TAG, "Failed to unregister the battery collector", it)
+        }
+        runCatching { thermalCollector.stop() }.onFailure {
+            Log.w(TAG, "Failed to unregister the thermal collector", it)
+        }
+    }
+
+    private fun cancelMonitoringNotificationSafely() {
+        runCatching { publisher.cancelMonitoringNotification() }.onFailure {
+            Log.w(TAG, "Failed to cancel monitoring notification during cleanup", it)
         }
     }
 
