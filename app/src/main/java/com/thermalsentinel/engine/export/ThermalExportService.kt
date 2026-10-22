@@ -9,6 +9,7 @@ import com.thermalsentinel.R
 import com.thermalsentinel.engine.data.ThermalHistoryRepository
 import com.thermalsentinel.engine.domain.ThermalFormatting
 import com.thermalsentinel.engine.monitoring.RetentionPolicy
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -63,7 +64,13 @@ class ThermalExportService(
         // The repository's read is a suspend Room query, but the entity-to-domain
         // mapping after it runs on the caller's dispatcher, and for a full export
         // that is tens of thousands of objects.
-        val samples = withContext(Dispatchers.IO) { history.samplesSince(from) }
+        val samples = try {
+            withContext(Dispatchers.IO) { history.samplesSince(from) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            return ExportOutcome.Failure("Reading retained history for export failed. Try again.")
+        }
         if (samples.isEmpty()) {
             return ExportOutcome.Empty(
                 "No samples are stored in the last ${ThermalFormatting.duration(effectiveWindow)}, so there is " +
@@ -76,7 +83,13 @@ class ThermalExportService(
         // export is roughly twenty thousand rows: building the text and writing it
         // to storage on the main thread is an ANR waiting for a slow device, and
         // nothing here needs the UI thread until the result is published.
-        val csv = withContext(Dispatchers.IO) { ThermalCsv.render(samples.map(CsvRow::from)) }
+        val csv = try {
+            withContext(Dispatchers.IO) { ThermalCsv.render(samples.map(CsvRow::from)) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            return ExportOutcome.Failure("Preparing the CSV export failed. Please try a shorter range.")
+        }
 
         return try {
             withContext(Dispatchers.IO) {
@@ -85,9 +98,9 @@ class ThermalExportService(
                     // Trim before writing, so the file that is about to be shared is
                     // never the one that gets collected.
                     pruneOldExports()
-                    val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmm")
+                    val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmmss-SSS")
                     val file = File(directory, "thermal-history-$label.csv")
-                    file.writeText(csv)
+                    writeAtomically(file) { temporary -> temporary.writeText(csv) }
                     ExportOutcome.Success(
                         ExportResult(
                             file = file,
@@ -100,8 +113,12 @@ class ThermalExportService(
                     ExportOutcome.Failure("The export directory could not be created.")
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (io: IOException) {
             ExportOutcome.Failure("Writing the export failed: ${io.message ?: "unknown error"}")
+        } catch (failure: RuntimeException) {
+            ExportOutcome.Failure("Creating the CSV export failed. Please try again.")
         }
     }
 
@@ -111,12 +128,22 @@ class ThermalExportService(
         val now = clock()
         val rawRetention = RetentionPolicy.RAW_RETENTION_DAYS * RetentionPolicy.DAY_MILLIS
         val effectiveWindow = windowMillis.coerceAtMost(rawRetention)
-        val samples = withContext(Dispatchers.IO) {
-            history.samplesSince(now - effectiveWindow)
+        val samples = try {
+            withContext(Dispatchers.IO) { history.samplesSince(now - effectiveWindow) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            return ExportOutcome.Failure("Reading retained history for export failed. Try again.")
         }
         if (samples.isEmpty()) {
             return ExportOutcome.Empty(
                 "No samples are stored in the last ${ThermalFormatting.duration(effectiveWindow)}, so there is nothing to export yet."
+            )
+        }
+        if (samples.size > MAX_PDF_ROWS) {
+            return ExportOutcome.Failure(
+                "This PDF would contain ${samples.size} rows, exceeding the safe limit of $MAX_PDF_ROWS. " +
+                    "Choose a shorter range or use CSV/JSON for the full retained history."
             )
         }
 
@@ -127,9 +154,9 @@ class ThermalExportService(
                     return@withContext ExportOutcome.Failure("The export directory could not be created.")
                 }
                 pruneOldExports()
-                val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmm")
+                val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmmss-SSS")
                 val file = File(directory, "thermal-history-$label.pdf")
-                writePdf(file, samples.map(CsvRow::from), now, effectiveWindow)
+                writeAtomically(file) { temporary -> writePdf(temporary, samples.map(CsvRow::from), now, effectiveWindow) }
                 ExportOutcome.Success(
                     ExportResult(
                         file = file,
@@ -140,10 +167,23 @@ class ThermalExportService(
                     )
                 )
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (io: IOException) {
             ExportOutcome.Failure("Writing the PDF report failed: ${io.message ?: "unknown error"}")
         } catch (failure: RuntimeException) {
             ExportOutcome.Failure("Creating the PDF report failed: ${failure.message ?: "unknown error"}")
+        }
+    }
+
+    private fun writeAtomically(target: File, writer: (File) -> Unit) {
+        val parent = target.parentFile ?: throw IOException("Export target has no parent directory.")
+        val temporary = File.createTempFile("thermal-export-", ".part", parent)
+        try {
+            writer(temporary)
+            if (!temporary.renameTo(target)) throw IOException("Could not publish the completed export file.")
+        } finally {
+            if (temporary.exists()) temporary.delete()
         }
     }
 
@@ -197,7 +237,7 @@ class ThermalExportService(
                     y += 16f
                 }
                 canvas.drawText("Page ${pageNumber + 1} of $pageCount", pageWidth - 75f, pageHeight - 18f, paint)
-                page.finishPage()
+                document.finishPage(page)
             }
             file.outputStream().buffered().use { output -> document.writeTo(output) }
         } finally {
@@ -226,9 +266,11 @@ class ThermalExportService(
                     return@withContext ExportOutcome.Failure("The export directory could not be created.")
                 }
                 pruneOldExports()
-                val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmm")
+                val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmmss-SSS")
                 val file = File(directory, "thermal-history-$label.json")
-                file.writeText(ThermalJson.render(samples.map(CsvRow::from), generatedAtMillis = now))
+                writeAtomically(file) { temporary ->
+                    temporary.writeText(ThermalJson.render(samples.map(CsvRow::from), generatedAtMillis = now))
+                }
                 ExportOutcome.Success(
                     ExportResult(
                         file = file,
@@ -239,8 +281,12 @@ class ThermalExportService(
                     )
                 )
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (io: IOException) {
             ExportOutcome.Failure("Writing the JSON export failed: ${io.message ?: "unknown error"}")
+        } catch (failure: RuntimeException) {
+            ExportOutcome.Failure("Creating the JSON export failed. Please try again.")
         }
     }
 
@@ -303,5 +349,6 @@ class ThermalExportService(
         const val MIME_TYPE = "text/csv"
         const val JSON_MIME_TYPE = "application/json"
         const val PDF_MIME_TYPE = "application/pdf"
+        const val MAX_PDF_ROWS = 10_000
     }
 }

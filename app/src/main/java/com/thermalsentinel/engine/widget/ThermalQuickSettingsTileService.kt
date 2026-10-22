@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 
 /**
  * Quick Settings entry point for the same user-controlled monitoring controller
@@ -26,6 +27,7 @@ import kotlinx.coroutines.launch
 class ThermalQuickSettingsTileService : TileService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val actionMutex = Mutex()
 
     override fun onStartListening() {
         super.onStartListening()
@@ -34,9 +36,11 @@ class ThermalQuickSettingsTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val controller = (application as ThermalSentinelApp).graph.monitoring
+        // Ignore a second tap until the first asynchronous transition completes.
+        if (!actionMutex.tryLock()) return
         scope.launch {
             try {
+                val controller = (application as ThermalSentinelApp).graph.monitoring
                 if (MonitoringStatus.isRunning.value) {
                     controller.stop()
                     waitForState(running = false)
@@ -50,7 +54,9 @@ class ThermalQuickSettingsTileService : TileService() {
                         ).show()
                     }
                 }
-            } catch (failure: RuntimeException) {
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
                 Toast.makeText(
                     this@ThermalQuickSettingsTileService,
                     getString(R.string.qs_tile_action_failed),
@@ -58,6 +64,7 @@ class ThermalQuickSettingsTileService : TileService() {
                 ).show()
             } finally {
                 refreshTile()
+                actionMutex.unlock()
             }
         }
     }
