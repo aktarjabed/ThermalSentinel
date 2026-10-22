@@ -65,6 +65,22 @@
         </service>
 
         <!--
+          The Quick Settings tile is a user-visible start/stop affordance. It is
+          protected by BIND_QUICK_SETTINGS_TILE and delegates all state changes to
+          MonitoringController; it does not add a second service or boot receiver.
+        -->
+        <service
+            android:name="com.thermalsentinel.engine.widget.ThermalQuickSettingsTileService"
+            android:label="@string/qs_tile_label"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!--
           Home-screen widget. APPWIDGET_UPDATE is a protected broadcast, so the
           exported receiver can only be reached by the system/launcher.
         -->

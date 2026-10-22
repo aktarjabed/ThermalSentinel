@@ -19,7 +19,7 @@ Status vocabulary:
 | Thermal Monitor | Battery temperature, platform thermal status, headroom, 24 h trend, recorded events, active rules | Live | Temperature, status and headroom come from the collectors; the chart draws raw samples and shows gaps as gaps; events are read from the local event table. |
 | Battery & Charging | Charge, voltage, current, health, cycle count, capacity level, charging sessions | Live | Unsupported platform values render their absence reason ("Unavailable on this device") rather than `0`. |
 | Alert Rules | Warning/critical thresholds, hysteresis, cooldown, charging rule, platform bands | Live | Rules are persisted in DataStore and evaluated by the running engine; invalid combinations are clamped and explained. |
-| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV export | Live | Longer ranges read compacted buckets and are labelled as averages; time above threshold is "not derivable" for those ranges instead of being estimated. |
+| Thermal History | 24 h raw, 7 d hourly averages, 30 d daily averages, min/max/avg, time above threshold, event timeline, CSV + JSON + PDF export | Live | Exports contain raw samples only; PDF is paginated, JSON is schema-versioned and absent values are null. Longer ranges read compacted buckets and are labelled as averages; time above threshold is not estimated from aggregates. |
 | Network Protection | VPN lifecycle, traffic visibility, per-app policy | UI only | No `VpnService` exists. The screen states that protection is off. |
 | Firewall Rules | Precedence, category rules, explicit override | UI only | — |
 | DNS Protection | Resolver state, blocklists, cache/attribution | UI only | No DNS engine, no `VpnService`. |
@@ -27,7 +27,7 @@ Status vocabulary:
 | App Activity | Package inventory, risk state, activity correlation | UI only | — |
 | Security Scanner | Evidence, confidence, risk assessment | UI only | — |
 | Security Timeline | Correlated local event stream | UI only | The thermal event timeline is real and lives on Thermal Monitor. |
-| Reports & Export | Report surfaces and export formats | Live (partial) | Live: CSV export of stored samples, via the app cache and the system share sheet. UI only: JSON, PDF and the combined report bundle. |
+| Reports & Export | Thermal history CSV + JSON + PDF | Live (partial) | All three formats export raw samples through the app cache and system share sheet. A combined diagnostic bundle and security/privacy report engines remain unimplemented. |
 | Quick Access | Battery/network/display settings intents | UI only | Rows are disabled and label the intent they will use. |
 | Diagnostics | Runtime readiness checks | Live | 11 checks; "cannot be verified" (for OEM background limits) is reported as `UNKNOWN`, never as a pass. |
 | Settings | Appearance preferences + engine position | Live | Theme mode, dynamic colour, AMOLED and accent are persisted in DataStore. Monitoring thresholds live on Alert Rules. |
@@ -41,5 +41,12 @@ Status vocabulary:
 | Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |
 | Local history database | Live | Room v1 with a 7 d / 90 d / 400 d retention ladder; no destructive migration. |
 | Alert notifications | Live | Two channels; monitoring continues when notifications are blocked, and Diagnostics says the notification is hidden. |
-| CSV export | Live | Sample table only; the window is clamped to raw retention and the result says so. |
+| CSV + JSON export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null. The window is clamped to raw retention and the result says so. |
 | Cloud sync, analytics, accounts | Not present | Not implemented by design, not merely disabled. |
+
+
+## Quick Settings tile validation
+
+| Surface | Status | Notes |
+|---|---|---|
+| Quick Settings monitoring tile | Implemented; device validation pending | Uses the protected `BIND_QUICK_SETTINGS_TILE` service and the shared `MonitoringController`. Tile state follows live service state, not the persisted intent. Validate add/remove, start/stop, notification denial and OEM restrictions on physical devices. |

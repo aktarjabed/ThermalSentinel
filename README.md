@@ -6,7 +6,7 @@ thermal state**. No account, no cloud, no ads, no analytics.
 This repository now contains a **working V1 monitoring engine** in addition to the
 Compose UI: a foreground service that samples the battery and thermal APIs, a local
 history database with a retention ladder, a hysteresis-aware alert engine, a
-diagnostics surface, CSV export and a real home-screen widget.
+diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 
 > **Build status:** CI runs the unit tests, both `assemble` variants and `lint` on
 > every push and pull request, and it fails on a Gradle error (the step uses
@@ -41,7 +41,7 @@ diagnostics surface, CSV export and a real home-screen widget.
 | Alert engine: NORMAL / WARNING / CRITICAL / RECOVERY, hysteresis, cooldown, charging rule, platform-status bands | Implemented |
 | Alert + ongoing notifications, two channels, permission-aware, `POST_NOTIFICATIONS` requested once per install | Implemented |
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
-| CSV export through the app cache and the system share sheet | Implemented |
+| CSV and versioned JSON export through the app cache and the system share sheet | Implemented |
 | Glance home-screen widget, pushed on new samples (≤1/min) | Implemented |
 | DataStore-persisted alert rules, monitoring intent and widget style | Implemented |
 | Appearance preferences (theme, dynamic colour, AMOLED, accent) | Implemented |
@@ -166,3 +166,40 @@ older Gradle would otherwise try to apply AGP) and copy the files over.
 - Confirm the `androidx.core:core-splashscreen` pin (1.0.1) before release.
 - Finalise `applicationId` before the first Play upload (it is intentionally
   unchanged so the installed identity does not move in this phase).
+
+
+## Quick Settings tile
+
+A protected Android Quick Settings tile is now available for starting and stopping
+monitoring without navigating through the app. It delegates to the same
+`MonitoringController` as the Dashboard and reports the live service state rather
+than treating a saved monitoring preference as proof that the service is alive.
+Android still controls whether the tile is available and whether a foreground
+service start is allowed; if a start is rejected, the tile shows a message and the
+user can open the app to retry.
+
+### Validate on a device
+
+1. Install the debug build on Android 12+.
+2. Open Quick Settings, choose **Edit**, and add **Thermal Sentinel**.
+3. Tap once and confirm the ongoing monitoring notification appears and the tile
+   changes to **Monitoring active**.
+4. Tap again and confirm the service stops and the tile returns to **Monitoring stopped**.
+5. Deny notification permission, repeat the test, and verify that the app explains
+   notification visibility separately from monitoring state.
+6. Repeat after force-stopping the app and after a device reboot. The tile must not
+   claim monitoring is active when the service is not running.
+
+Device/OEM validation is still required; CI cannot prove Quick Settings behavior or
+foreground-service policy on every Android build.
+
+
+## Structured JSON export
+
+Thermal History can export raw samples as CSV, versioned JSON, or a paginated PDF report. JSON includes
+`schema_version`, generation time, sample count and the same explicit measurement
+fields as CSV. Missing measurements are JSON `null`, and non-finite float values
+are normalised to `null` so the document remains valid JSON. All formats are
+written to the app cache and handed to the Android share sheet; neither is uploaded.
+Exports remain limited to the raw-sample retention window and says so when a
+longer window was requested.
