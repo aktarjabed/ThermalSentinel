@@ -502,6 +502,8 @@ fun ThermalScreen() {
     // The threshold plotted is the one the engine actually alerts on right now,
     // including the separate charging threshold when it applies.
     val activeThreshold = rules.effectiveWarningThresholdC(battery?.onExternalPower == true)
+    // Snapshot delegated Compose state into a stable local for Kotlin smart casts.
+    val forecastEstimate = forecast
 
     ScreenContent {
         ScreenHeader(
@@ -560,14 +562,14 @@ fun ThermalScreen() {
             KeyValueRow(
                 "Estimated time to warning",
                 when {
-                    forecast == null -> "Insufficient evidence or no rising trend"
-                    forecast.minutesToThreshold <= 0f -> "At or above the fitted threshold now"
-                    else -> "~${maxOf(1, forecast.minutesToThreshold.roundToInt())} min at the recent trend"
+                    forecastEstimate == null -> "Insufficient evidence or no rising trend"
+                    forecastEstimate.minutesToThreshold <= 0f -> "At or above the fitted threshold now"
+                    else -> "~${maxOf(1, forecastEstimate.minutesToThreshold.roundToInt())} min at the recent trend"
                 }
             )
             KeyValueRow(
                 "Fitted heating rate",
-                forecast?.let {
+                forecastEstimate?.let {
                     String.format(Locale.getDefault(), "%.2f °C/min", it.slopeCPerMinute)
                 } ?: "Not enough recent samples"
             )

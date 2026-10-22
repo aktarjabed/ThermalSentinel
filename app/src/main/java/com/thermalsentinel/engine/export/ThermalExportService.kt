@@ -250,8 +250,12 @@ class ThermalExportService(
         val now = clock()
         val rawRetention = RetentionPolicy.RAW_RETENTION_DAYS * RetentionPolicy.DAY_MILLIS
         val effectiveWindow = windowMillis.coerceAtMost(rawRetention)
-        val samples = withContext(Dispatchers.IO) {
-            history.samplesSince(now - effectiveWindow)
+        val samples = try {
+            withContext(Dispatchers.IO) { history.samplesSince(now - effectiveWindow) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            return ExportOutcome.Failure("Reading retained history for export failed. Try again.")
         }
         if (samples.isEmpty()) {
             return ExportOutcome.Empty(
