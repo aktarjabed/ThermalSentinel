@@ -34,7 +34,7 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Area | Status |
 |---|---|
 | Monitoring foreground service (`specialUse`, `START_NOT_STICKY`, user-started only) | Implemented |
-| Adaptive sampling (5–90 s by state) with a stated reason for every interval | Implemented |
+| Adaptive sampling with configurable 15/30/60/120 s active-screen baseline and adaptive event states | Implemented |
 | Battery collector (sticky broadcast + `BatteryManager` properties, API-gated extras) | Implemented |
 | Thermal collector (status listener; shared headroom read limited to once per 10 s) | Implemented |
 | Room v1 history: raw / hourly / daily retention ladder, charging sessions, event timeline | Implemented |
@@ -43,7 +43,7 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
 | CSV, versioned JSON and PDF export through the app cache and the system share sheet | Implemented |
 | Glance home-screen widget, pushed on new samples (≤1/min) | Implemented |
-| DataStore-persisted alert rules, monitoring intent and widget style | Implemented |
+| DataStore-persisted alert rules, monitoring intent, sampling preference, temperature unit and optional background logging | Implemented |
 | Appearance preferences (theme, dynamic colour, AMOLED, accent) | Implemented |
 
 ## What is **not** in this build
@@ -55,7 +55,7 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Privacy Monitor, App Activity, Security Timeline, Security Scanner | Not implemented |
 | Combined diagnostic bundle, security/privacy reports | Not implemented; thermal CSV, versioned JSON and PDF are implemented |
 | Quick Access settings intents | Rows are disabled and labelled |
-| Boot-time start of monitoring | Deliberately absent; monitoring resumes when the app is opened |
+| Boot-time start of continuous monitoring | Deliberately absent; optional periodic history logging may be rescheduled by WorkManager but never starts the foreground service |
 | Brightness control, app force-stop, thermal-engine overrides | Deliberately absent, permanently |
 
 ## Honesty rules the code enforces
@@ -193,6 +193,13 @@ user can open the app to retry.
 Device/OEM validation is still required; CI cannot prove Quick Settings behavior or
 foreground-service policy on every Android build.
 
+
+## Optional background logging
+
+Light background logging is opt-in and scheduled at a 15-minute minimum interval. It
+records a history sample only when continuous monitoring is off and no recent sample
+exists. It does not publish alerts, poll thermal headroom, or start a foreground service.
+Android may defer scheduled work under Doze and battery constraints.
 
 ## Structured JSON export
 

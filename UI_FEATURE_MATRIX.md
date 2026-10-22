@@ -30,7 +30,7 @@ Status vocabulary:
 | Reports & Export | Thermal history CSV + JSON + PDF | Live (partial) | All three formats export raw samples through the app cache and system share sheet. A combined diagnostic bundle and security/privacy report engines remain unimplemented. |
 | Quick Access | Battery/network/display settings intents | UI only | Rows are disabled and label the intent they will use. |
 | Diagnostics | Runtime readiness checks | Live | 11 checks; "cannot be verified" (for OEM background limits) is reported as `UNKNOWN`, never as a pass. |
-| Settings | Appearance preferences + engine position | Live | Theme mode, dynamic colour, AMOLED and accent are persisted in DataStore. Monitoring thresholds live on Alert Rules. |
+| Settings | Appearance, selectable sampling and optional background logger | Live (partial) | Theme mode, dynamic colour, AMOLED/accent, 15/30/60/120 s sampling baseline and opt-in 15-minute-or-later history logging are persisted. Background logging never starts foreground monitoring. Alert thresholds live on Alert Rules. |
 | Widgets | SYSTEM / THEMED / TRANSPARENT variants | Live | A real Glance provider reads the same local history; the selected style is persisted and applied. The widget says "monitoring is off" rather than showing a stale temperature. |
 | About | Product principles, monetisation position, build metadata | Static | Version comes from `BuildConfig`. |
 
@@ -38,7 +38,7 @@ Status vocabulary:
 
 | Component | Status | Notes |
 |---|---|---|
-| Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |
+| Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |\n| Light background logger | Live (opt-in) | Unique WorkManager periodic work; skips while monitoring is running or a recent sample exists; never claims real-time alert monitoring. |
 | Local history database | Live | Room v1 with a 7 d / 90 d / 400 d retention ladder; no destructive migration. |
 | Alert notifications | Live | Two channels; monitoring continues when notifications are blocked, and Diagnostics says the notification is hidden. |
 | CSV + JSON + PDF export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null; large PDFs are bounded to avoid memory exhaustion. The window is clamped to raw retention and the result says so. |

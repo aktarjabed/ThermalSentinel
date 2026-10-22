@@ -1391,6 +1391,10 @@ fun SettingsScreen(
     onAmoledChanged: (Boolean) -> Unit,
     onAccentChanged: (String) -> Unit
 ) {
+    val monitoringSettings: MonitoringViewModel = viewModel()
+    val preferredIntervalSeconds by monitoringSettings.preferredSamplingIntervalSeconds.collectAsStateWithLifecycle()
+    val backgroundLoggingEnabled by monitoringSettings.backgroundLoggingEnabled.collectAsStateWithLifecycle()
+
     ScreenContent {
         ScreenHeader(
             "Settings",
@@ -1431,10 +1435,47 @@ fun SettingsScreen(
                 )
             }
         }
-        FeatureCard("Monitoring", "Future thermal/battery controls", { Icon(Icons.Default.Thermostat, null) }) {
-            SettingSwitch("Background monitoring", "Persistent monitoring service", false)
-            SettingSwitch("Adaptive sampling", "Change sampling rate based on thermal state", true)
-            SettingSwitch("24h history", "Persist thermal measurements locally", true)
+        FeatureCard(
+            "Thermal monitoring",
+            "Preferences apply to future samples; alert states continue to override the normal cadence",
+            { Icon(Icons.Default.Thermostat, null) }
+        ) {
+            Text("Normal sampling interval", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Select the active-screen baseline when no thermal event is active.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                listOf(15, 30, 60, 120).forEach { seconds ->
+                    FilterChip(
+                        selected = preferredIntervalSeconds == seconds,
+                        onClick = { monitoringSettings.setPreferredSamplingIntervalSeconds(seconds) },
+                        label = { Text("$seconds s") }
+                    )
+                }
+            }
+            DividerRow()
+            SettingSwitch(
+                "Light background logging",
+                "Opt-in sample every 15 minutes or later. Skips recent readings, does not send alerts and never starts continuous monitoring.",
+                backgroundLoggingEnabled,
+                onCheckedChange = monitoringSettings::setBackgroundLoggingEnabled
+            )
+            Text(
+                "Android may defer background work under Doze or battery constraints. Turn on continuous monitoring from the Dashboard for live alerts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            monitoringSettings.message.collectAsStateWithLifecycle().value?.let { message ->
+                NoticeCard(
+                    message,
+                    isError = message.startsWith("Could not") || message.contains("could not")
+                )
+            }
         }
         FeatureCard("Network protection", "Future VPN controls", { Icon(Icons.Default.Wifi, null) }) {
             SettingSwitch("Network protection", "Local VPN firewall", false)

@@ -8,6 +8,8 @@ import com.thermalsentinel.engine.alert.AlertLevel
 import com.thermalsentinel.engine.alert.AlertState
 import com.thermalsentinel.engine.data.MonitoringStopReason
 import com.thermalsentinel.engine.domain.DeviceSample
+import com.thermalsentinel.engine.data.EngineSettingsRepository
+import com.thermalsentinel.engine.monitoring.BackgroundLoggingScheduler
 import com.thermalsentinel.engine.service.MonitoringStartResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +42,20 @@ class MonitoringViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     val serviceRunning: StateFlow<Boolean> = graph.monitoring.isRunning
+
+    val preferredSamplingIntervalSeconds: StateFlow<Int> =
+        graph.settings.preferredSamplingIntervalSeconds.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000),
+            EngineSettingsRepository.DEFAULT_SAMPLING_INTERVAL_SECONDS
+        )
+    val backgroundLoggingEnabled: StateFlow<Boolean> =
+        graph.settings.backgroundLoggingEnabled.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000), false
+        )
+    val useFahrenheit: StateFlow<Boolean> =
+        graph.settings.useFahrenheit.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5_000), false
+        )
 
     val latestSample: StateFlow<DeviceSample?> = graph.history.latestSample
 
@@ -96,6 +112,37 @@ class MonitoringViewModel(application: Application) : AndroidViewModel(applicati
     fun refreshNow() = runControl {
         graph.history.loadLatest()
         _message.value = "Reloaded the last stored reading."
+    }
+
+    fun setPreferredSamplingIntervalSeconds(seconds: Int) {
+        if (seconds !in EngineSettingsRepository.SUPPORTED_SAMPLING_INTERVAL_SECONDS) return
+        viewModelScope.launch {
+            graph.settings.setPreferredSamplingIntervalSeconds(seconds)
+            _message.value = "Sampling preference saved. Adaptive event states still use faster cadence."
+        }
+    }
+
+    fun setUseFahrenheit(enabled: Boolean) {
+        viewModelScope.launch { graph.settings.setUseFahrenheit(enabled) }
+    }
+
+    fun setBackgroundLoggingEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                graph.settings.setBackgroundLoggingEnabled(enabled)
+                val persisted = graph.settings.backgroundLoggingEnabledNow()
+                BackgroundLoggingScheduler.sync(getApplication(), persisted)
+                _message.value = when {
+                    persisted != enabled -> "The background logging preference could not be saved."
+                    enabled -> "Light background logging enabled; Android may defer scheduled samples."
+                    else -> "Light background logging disabled."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                _message.value = "Could not update background logging. Open Diagnostics and try again."
+            }
+        }
     }
 
     /** Fences rapid repeated UI actions and always restores the busy state after a failure. */
