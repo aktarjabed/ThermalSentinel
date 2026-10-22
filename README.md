@@ -6,7 +6,7 @@ thermal state**. No account, no cloud, no ads, no analytics.
 This repository now contains a **working V1 monitoring engine** in addition to the
 Compose UI: a foreground service that samples the battery and thermal APIs, a local
 history database with a retention ladder, a hysteresis-aware alert engine, a
-diagnostics surface, CSV export and a real home-screen widget.
+diagnostics surface, CSV + JSON export and a real home-screen widget.
 
 > **Build status:** CI runs the unit tests, both `assemble` variants and `lint` on
 > every push and pull request, and it fails on a Gradle error (the step uses
