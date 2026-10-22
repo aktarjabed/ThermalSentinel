@@ -488,6 +488,7 @@ fun ThermalScreen() {
     val statistics by viewModel.statistics.collectAsStateWithLifecycle()
     val events by viewModel.events.collectAsStateWithLifecycle()
     val rules by viewModel.rules.collectAsStateWithLifecycle()
+    val forecast by viewModel.forecast.collectAsStateWithLifecycle()
 
     val current = sample
     val battery = current?.battery
@@ -555,6 +556,25 @@ fun ThermalScreen() {
             KeyValueRow("Maximum", temperatureValueText(statistics?.maxTemperatureC))
             KeyValueRow("Average", temperatureValueText(statistics?.averageTemperatureC))
             KeyValueRow("Warning threshold", celsius(activeThreshold))
+            KeyValueRow(
+                "Estimated time to warning",
+                when {
+                    forecast == null -> "Insufficient evidence or no rising trend"
+                    forecast.minutesToThreshold <= 0f -> "At or above the fitted threshold now"
+                    else -> "~${maxOf(1, forecast.minutesToThreshold.roundToInt())} min at the recent trend"
+                }
+            )
+            KeyValueRow(
+                "Fitted heating rate",
+                forecast?.let {
+                    String.format(Locale.getDefault(), "%.2f °C/min", it.slopeCPerMinute)
+                } ?: "Not enough recent samples"
+            )
+            Text(
+                "Forecast is a short-term linear estimate from recent battery-temperature samples, not a guarantee.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             val above = statistics?.timeAboveThresholdMillis
             KeyValueRow(
                 "Time above threshold",

@@ -77,6 +77,9 @@ class ThermalViewModel(application: Application) : HistoryReadingViewModel(appli
     private val _events = MutableStateFlow<List<ThermalEventSummary>>(emptyList())
     val events: StateFlow<List<ThermalEventSummary>> = _events.asStateFlow()
 
+    private val _forecast = MutableStateFlow<HistoryMath.ThresholdForecast?>(null)
+    val forecast: StateFlow<HistoryMath.ThresholdForecast?> = _forecast.asStateFlow()
+
     val rules: StateFlow<ThermalAlertRules> = graph.settings.rules.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -91,13 +94,15 @@ class ThermalViewModel(application: Application) : HistoryReadingViewModel(appli
     suspend fun refresh() {
         val now = System.currentTimeMillis()
         _series.value = graph.history.series24h(now)
+        val activeThreshold = rules.value.effectiveWarningThresholdC(
+            latestSample.value?.battery?.onExternalPower == true
+        )
         _statistics.value = graph.history.statistics(
             windowMillis = HistoryRange.DAY.windowMillis,
-            warningThresholdC = rules.value.effectiveWarningThresholdC(
-                latestSample.value?.battery?.onExternalPower == true
-            ),
+            warningThresholdC = activeThreshold,
             nowMillis = now
         )
+        _forecast.value = HistoryMath.forecastToThreshold(_series.value, activeThreshold)
         _events.value = graph.history.recentEvents(limit = 12)
     }
 
