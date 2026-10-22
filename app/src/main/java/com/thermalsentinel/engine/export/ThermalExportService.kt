@@ -269,6 +269,13 @@ class ThermalExportService(
             )
         }
 
+        if (samples.size > MAX_TEXT_EXPORT_ROWS) {
+            return ExportOutcome.Failure(
+                "This JSON export would contain more than $MAX_TEXT_EXPORT_ROWS rows. Choose a shorter range " +
+                    "to keep memory use bounded."
+            )
+        }
+
         return try {
             withContext(Dispatchers.IO) {
                 val directory = File(context.cacheDir, DIRECTORY)
