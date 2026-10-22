@@ -105,6 +105,7 @@ import com.thermalsentinel.ui.data.AccentPreset
 import com.thermalsentinel.ui.data.ThemeMode
 import com.thermalsentinel.ui.data.UiPreferences
 import com.thermalsentinel.ui.data.WidgetStyle
+import com.thermalsentinel.ui.data.LocalUseFahrenheit
 import com.thermalsentinel.ui.navigation.Routes
 // Required: seed() is an internal extension in the theme package.
 import com.thermalsentinel.ui.theme.seed
@@ -143,8 +144,9 @@ import com.thermalsentinel.ui.live.ThermalViewModel
  * the user's locale; `Locale.ROOT` would force "38.4°C" everywhere, which is
  * not what Android convention expects.
  */
+@Composable
 private fun celsius(value: Float): String =
-    String.format(Locale.getDefault(), "%.1f°C", value)
+    ThermalFormatting.temperature(value, LocalUseFahrenheit.current)
 
 /**
  * Honest scroll container. fillMaxSize guarantees the container occupies the
@@ -179,11 +181,14 @@ private fun Reading<*>?.absenceLabelOrMarker(): String =
 
 private fun <T> Reading<T>?.presentOrNull(): T? = this?.valueOrNull
 
+@Composable
 private fun temperatureText(reading: Reading<Float>?): String =
-    reading.presentOrNull()?.let { ThermalFormatting.temperatureCelsius(it) }
+    reading.presentOrNull()?.let { ThermalFormatting.temperature(it, LocalUseFahrenheit.current) }
         ?: reading.absenceLabelOrMarker()
 
-private fun temperatureValueText(value: Float?): String = ThermalFormatting.temperatureCelsius(value)
+@Composable
+private fun temperatureValueText(value: Float?): String =
+    ThermalFormatting.temperature(value, LocalUseFahrenheit.current)
 
 private fun headroomText(reading: Reading<Float>?): String =
     // Headroom is a ratio between readings, so it is never rendered with a degree sign.
@@ -570,7 +575,7 @@ fun ThermalScreen() {
             KeyValueRow(
                 "Fitted heating rate",
                 forecastEstimate?.let {
-                    String.format(Locale.getDefault(), "%.2f °C/min", it.slopeCPerMinute)
+                    ThermalFormatting.temperatureRate(it.slopeCPerMinute, LocalUseFahrenheit.current)
                 } ?: "Not enough recent samples"
             )
             Text(
@@ -787,7 +792,7 @@ fun BatteryScreen() {
         ) {
             KeyValueRow("Samples taken while charging", (statistics?.chargingSampleCount ?: 0).toString())
             KeyValueRow("Maximum temperature today", temperatureValueText(statistics?.maxTemperatureC))
-            KeyValueRow("Records over 40 °C today", "Counted in Thermal History")
+            KeyValueRow("Records over ${celsius(40f)} today", "Counted in Thermal History")
         }
 
         FeatureCard(
@@ -1458,6 +1463,12 @@ fun SettingsScreen(
                     )
                 }
             }
+            SettingSwitch(
+                "Fahrenheit display",
+                "Display conversions only; saved history, thresholds and calculations remain Celsius-based.",
+                LocalUseFahrenheit.current,
+                onCheckedChange = monitoringSettings::setUseFahrenheit
+            )
             DividerRow()
             SettingSwitch(
                 "Light background logging",
@@ -1855,7 +1866,7 @@ fun AlertRulesScreen() {
         ) {
             SettingSwitch(
                 title = "Enable critical alerts",
-                subtitle = "Kept at least 1 °C above the warning threshold",
+                subtitle = "Kept above the warning threshold by the configured hysteresis gap",
                 checked = rules.criticalEnabled,
                 onCheckedChange = viewModel::setCriticalEnabled
             )
@@ -1989,6 +2000,11 @@ private fun TemperatureEditor(
     enabled: Boolean,
     range: ClosedFloatingPointRange<Float>
 ) {
+    val useFahrenheit = LocalUseFahrenheit.current
+    val displayValue = if (useFahrenheit) ThermalFormatting.celsiusToFahrenheit(value) else value
+    val displayStart = if (useFahrenheit) ThermalFormatting.celsiusToFahrenheit(range.start) else range.start
+    val displayEnd = if (useFahrenheit) ThermalFormatting.celsiusToFahrenheit(range.endInclusive) else range.endInclusive
+    val displayRange = displayStart..displayEnd
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
@@ -1998,16 +2014,18 @@ private fun TemperatureEditor(
                 else MaterialTheme.colorScheme.outline
             )
             Text(
-                "${value.roundToInt()}°C",
+                celsius(value),
                 style = MaterialTheme.typography.titleMedium,
                 color = if (enabled) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.outline
             )
         }
         Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = range,
+            value = displayValue,
+            onValueChange = { displayed ->
+                onValueChange(if (useFahrenheit) (displayed - 32f) * 5f / 9f else displayed)
+            },
+            valueRange = displayRange,
             enabled = enabled,
             steps = (range.endInclusive - range.start).roundToInt() - 1
         )
