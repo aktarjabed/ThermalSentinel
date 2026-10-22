@@ -199,7 +199,7 @@ class ThermalExportService(
                 canvas.drawText("Page ${pageNumber + 1} of $pageCount", pageWidth - 75f, pageHeight - 18f, paint)
                 page.finishPage()
             }
-            file.outputStream().buffered().use(document::writeTo)
+            file.outputStream().buffered().use { output -> document.writeTo(output) }
         } finally {
             document.close()
         }
