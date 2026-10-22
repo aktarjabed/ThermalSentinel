@@ -71,11 +71,11 @@ class BackgroundLoggingWorker(
             )
             graph.history.record(sample)
             runCatching { WidgetUpdater.onSampleStored(applicationContext) }
-            Result.success()
+            return Result.success()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            Result.retry()
+            return Result.retry()
         } finally {
             runCatching { batteryCollector?.stop() }
         }
