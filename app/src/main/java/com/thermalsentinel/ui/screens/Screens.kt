@@ -1142,10 +1142,13 @@ fun HistoryScreen() {
             Button(onClick = viewModel::exportCsv, modifier = Modifier.fillMaxWidth()) {
                 Text("Export CSV")
             }
+            OutlinedButton(onClick = viewModel::exportJson, modifier = Modifier.fillMaxWidth()) {
+                Text("Export JSON")
+            }
             when (currentOutcome) {
                 null -> Text(
-                    "Only the sample table is exported, because hourly and daily rows are averages. " +
-                        "An empty field in the file means the platform did not report that value.",
+                    "Exports contain raw samples only; hourly and daily rows are aggregates. " +
+                        "Missing readings stay explicit (blank CSV fields or JSON null).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
