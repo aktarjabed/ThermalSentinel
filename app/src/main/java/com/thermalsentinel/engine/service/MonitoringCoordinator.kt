@@ -19,6 +19,7 @@ import com.thermalsentinel.engine.monitoring.SamplingContext
 import com.thermalsentinel.engine.monitoring.SamplingDecision
 import com.thermalsentinel.engine.monitoring.SamplingPolicy
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -63,7 +64,9 @@ class MonitoringCoordinator(
     private val _alertExplanation = MutableStateFlow("No sample evaluated yet.")
     val alertExplanation: StateFlow<String> = _alertExplanation.asStateFlow()
 
+    private val lifecycleLock = Any()
     private var loopJob: Job? = null
+    private var restartRequestedAfterCancellation = false
     private var previousTimestampMillis: Long? = null
     private var lastStoredSample: DeviceSample? = null
 
@@ -71,20 +74,56 @@ class MonitoringCoordinator(
         _alertState.value = settings.alertStateNow()
     }
 
+    /**
+     * Starts the collectors exactly once per active loop. A cancelled loop keeps
+     * ownership until its finally block runs, preventing duplicate receiver/listener
+     * registration if the service is quickly stopped and restarted.
+     */
     fun start() {
-        batteryCollector.start()
-        thermalCollector.start()
-        if (loopJob != null) return
-        loopJob = scope.launch { runLoop() }
+        synchronized(lifecycleLock) {
+            val current = loopJob
+            if (current != null) {
+                if (!current.isActive) restartRequestedAfterCancellation = true
+                return
+            }
+            try {
+                batteryCollector.start()
+                thermalCollector.start()
+            } catch (failure: Exception) {
+                batteryCollector.stop()
+                thermalCollector.stop()
+                throw failure
+            }
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    runLoop()
+                } finally {
+                    val restart = synchronized(lifecycleLock) {
+                        if (loopJob === coroutineContext[Job]) loopJob = null
+                        val requested = restartRequestedAfterCancellation
+                        restartRequestedAfterCancellation = false
+                        requested
+                    }
+                    batteryCollector.stop()
+                    thermalCollector.stop()
+                    publisher.cancelMonitoringNotification()
+                    if (restart) start()
+                }
+            }
+            loopJob = job
+            job.start()
+        }
     }
 
     /** Stops sampling and clears the ongoing notification. Safe to call twice. */
     fun stop() {
-        loopJob?.cancel()
-        loopJob = null
-        batteryCollector.stop()
-        thermalCollector.stop()
-        publisher.cancelMonitoringNotification()
+        synchronized(lifecycleLock) {
+            restartRequestedAfterCancellation = false
+            loopJob?.cancel()
+            batteryCollector.stop()
+            thermalCollector.stop()
+            publisher.cancelMonitoringNotification()
+        }
     }
 
     /**
