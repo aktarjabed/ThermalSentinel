@@ -167,6 +167,7 @@ class MonitoringCoordinator(
 
     private suspend fun runLoop() {
         var initialized = false
+        var firstSampleCompleted = false
         var consecutiveFailures = 0
 
         while (currentCoroutineContext().isActive) {
@@ -178,9 +179,12 @@ class MonitoringCoordinator(
                     // persisted alert state has been loaded.
                     refreshMonitoringNotification(lastStoredSample ?: history.latestSample.value)
                     initialized = true
-                    // Take the first sample immediately so the UI never waits a full
-                    // normal interval after the user explicitly starts monitoring.
+                }
+                if (!firstSampleCompleted) {
+                    // Retry the immediate sample after a failure instead of waiting
+                    // a full scheduled interval before the first recorded reading.
                     sampleNow(SampleReason.SERVICE_START, settings.preferredSamplingIntervalMillisNow())
+                    firstSampleCompleted = true
                 } else {
                     val decision = nextDecision()
                     _samplingDecision.value = decision
