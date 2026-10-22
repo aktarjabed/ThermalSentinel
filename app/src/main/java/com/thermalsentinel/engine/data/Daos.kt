@@ -26,6 +26,16 @@ interface ThermalSampleDao {
     @Query("SELECT * FROM thermal_samples WHERE timestampMillis >= :fromMillis ORDER BY timestampMillis ASC")
     suspend fun since(fromMillis: Long): List<ThermalSampleEntity>
 
+    /**
+     * Bounded query for user-facing exports only. The time-series/rate detectors
+     * must continue using [since], because a row cap there would distort a time window.
+     */
+    @Query(
+        "SELECT * FROM thermal_samples WHERE timestampMillis >= :fromMillis " +
+            "ORDER BY timestampMillis ASC LIMIT :limit"
+    )
+    suspend fun sinceForExport(fromMillis: Long, limit: Int): List<ThermalSampleEntity>
+
     @Query("SELECT * FROM thermal_samples WHERE timestampMillis < :beforeMillis ORDER BY timestampMillis ASC")
     suspend fun before(beforeMillis: Long): List<ThermalSampleEntity>
 

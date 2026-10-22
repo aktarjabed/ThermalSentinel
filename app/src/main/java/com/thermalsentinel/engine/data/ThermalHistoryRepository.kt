@@ -233,6 +233,10 @@ class ThermalHistoryRepository(
     suspend fun samplesSince(fromMillis: Long): List<DeviceSample> =
         sampleDao.since(fromMillis).map(SampleMappers::toDomain)
 
+    /** Query bounded rows for export before mapping Room entities to domain objects. */
+    suspend fun samplesSinceLimited(fromMillis: Long, limit: Int): List<DeviceSample> =
+        sampleDao.sinceForExport(fromMillis, limit.coerceAtLeast(1)).map(SampleMappers::toDomain)
+
     /**
      * Series served from compacted buckets (hourly or daily) for ranges beyond
      * raw retention. Values are bucket averages, which is exactly why the chart

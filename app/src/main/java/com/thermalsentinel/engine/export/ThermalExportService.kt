@@ -65,7 +65,7 @@ class ThermalExportService(
         // mapping after it runs on the caller's dispatcher, and for a full export
         // that is tens of thousands of objects.
         val samples = try {
-            withContext(Dispatchers.IO) { history.samplesSince(from) }
+            withContext(Dispatchers.IO) { history.samplesSinceLimited(from, MAX_TEXT_EXPORT_ROWS + 1) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -75,6 +75,12 @@ class ThermalExportService(
             return ExportOutcome.Empty(
                 "No samples are stored in the last ${ThermalFormatting.duration(effectiveWindow)}, so there is " +
                     "nothing to export yet."
+            )
+        }
+        if (samples.size > MAX_TEXT_EXPORT_ROWS) {
+            return ExportOutcome.Failure(
+                "This CSV would contain more than $MAX_TEXT_EXPORT_ROWS rows. Choose a shorter range to keep " +
+                    "the export responsive, or wait for the retained history to thin out."
             )
         }
 
@@ -129,7 +135,7 @@ class ThermalExportService(
         val rawRetention = RetentionPolicy.RAW_RETENTION_DAYS * RetentionPolicy.DAY_MILLIS
         val effectiveWindow = windowMillis.coerceAtMost(rawRetention)
         val samples = try {
-            withContext(Dispatchers.IO) { history.samplesSince(now - effectiveWindow) }
+            withContext(Dispatchers.IO) { history.samplesSinceLimited(now - effectiveWindow, MAX_PDF_ROWS + 1) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -251,7 +257,7 @@ class ThermalExportService(
         val rawRetention = RetentionPolicy.RAW_RETENTION_DAYS * RetentionPolicy.DAY_MILLIS
         val effectiveWindow = windowMillis.coerceAtMost(rawRetention)
         val samples = try {
-            withContext(Dispatchers.IO) { history.samplesSince(now - effectiveWindow) }
+            withContext(Dispatchers.IO) { history.samplesSinceLimited(now - effectiveWindow, MAX_TEXT_EXPORT_ROWS + 1) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -354,5 +360,6 @@ class ThermalExportService(
         const val JSON_MIME_TYPE = "application/json"
         const val PDF_MIME_TYPE = "application/pdf"
         const val MAX_PDF_ROWS = 10_000
+        const val MAX_TEXT_EXPORT_ROWS = 50_000
     }
 }
