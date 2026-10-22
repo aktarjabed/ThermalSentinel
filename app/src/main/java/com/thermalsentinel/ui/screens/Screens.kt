@@ -1465,7 +1465,7 @@ fun SettingsScreen(
             }
             SettingSwitch(
                 "Fahrenheit display",
-                "Display conversions only; saved history, thresholds and calculations remain Celsius-based.",
+                "Display conversions only; saved history, thresholds, calculations and CSV/JSON/PDF exports remain Celsius-based.",
                 LocalUseFahrenheit.current,
                 onCheckedChange = monitoringSettings::setUseFahrenheit
             )

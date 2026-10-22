@@ -236,7 +236,12 @@ class EngineSettingsRepository(private val context: Context) {
         const val DEFAULT_SAMPLING_INTERVAL_SECONDS = 30
         val SUPPORTED_SAMPLING_INTERVAL_SECONDS = listOf(15, 30, 60, 120)
 
-        fun normalizeSamplingIntervalSeconds(value: Int): Int =
-            SUPPORTED_SAMPLING_INTERVAL_SECONDS.minBy { kotlin.math.abs(it - value) }
+        fun normalizeSamplingIntervalSeconds(value: Int): Int {
+            val bounded = value.coerceIn(
+                SUPPORTED_SAMPLING_INTERVAL_SECONDS.first(),
+                SUPPORTED_SAMPLING_INTERVAL_SECONDS.last()
+            )
+            return SUPPORTED_SAMPLING_INTERVAL_SECONDS.minBy { kotlin.math.abs(it - bounded) }
+        }
     }
 }

@@ -41,7 +41,7 @@ diagnostics surface, CSV + JSON + PDF export and a real home-screen widget.
 | Alert engine: NORMAL / WARNING / CRITICAL / RECOVERY, hysteresis, cooldown, charging rule, platform-status bands | Implemented |
 | Alert + ongoing notifications, two channels, permission-aware, `POST_NOTIFICATIONS` requested once per install | Implemented |
 | Dashboard, Thermal, Battery, History, Alert Rules, Diagnostics, Widgets screens | Wired to the engine |
-| CSV, versioned JSON and PDF export through the app cache and the system share sheet | Implemented |
+| CSV, versioned JSON and PDF export through the app cache and the system share sheet (50,000-row CSV/JSON cap; 10,000-row PDF cap) | Implemented |
 | Glance home-screen widget, pushed on new samples (≤1/min) | Implemented |
 | DataStore-persisted alert rules, monitoring intent, sampling preference, temperature unit and optional background logging | Implemented |
 | Appearance preferences (theme, dynamic colour, AMOLED, accent) | Implemented |

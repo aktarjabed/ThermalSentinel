@@ -106,8 +106,11 @@ class MonitoringCoordinator(
                     }
                     batteryCollector.stop()
                     thermalCollector.stop()
-                    publisher.cancelMonitoringNotification()
-                    if (restart) start()
+                    if (restart) {
+                        start()
+                    } else {
+                        publisher.cancelMonitoringNotification()
+                    }
                 }
             }
             loopJob = job

@@ -41,7 +41,7 @@ Status vocabulary:
 | Monitoring foreground service | Live | `specialUse` type, `START_NOT_STICKY`, user-started only, stop reason recorded. |\n| Light background logger | Live (opt-in) | Unique WorkManager periodic work; skips while monitoring is running or a recent sample exists; never claims real-time alert monitoring. |
 | Local history database | Live | Room v1 with a 7 d / 90 d / 400 d retention ladder; no destructive migration. |
 | Alert notifications | Live | Two channels; monitoring continues when notifications are blocked, and Diagnostics says the notification is hidden. |
-| CSV + JSON + PDF export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null; large PDFs are bounded to avoid memory exhaustion. The window is clamped to raw retention and the result says so. |
+| CSV + JSON + PDF export | Live | Raw sample table only; JSON is versioned and keeps absent readings as null; CSV/JSON are capped at 50,000 rows and PDF at 10,000 rows before rendering to bound memory use. The window is clamped to raw retention and the result says so. |
 | Cloud sync, analytics, accounts | Not present | Not implemented by design, not merely disabled. |
 
 
