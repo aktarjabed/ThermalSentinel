@@ -182,7 +182,10 @@ class MonitoringCoordinator(
                         thermalStatus = action.thermalStatus,
                         detail = evaluation.explanation
                     )
-                    publisher.publishAlert(action, rules, sample.battery.onExternalPower)
+                    publisher.publishAlert(
+                        action, rules, sample.battery.onExternalPower,
+                        useFahrenheit = settings.useFahrenheitNow()
+                    )
                 }
 
                 is AlertAction.Cleared -> {
@@ -194,7 +197,9 @@ class MonitoringCoordinator(
                         thermalStatus = action.thermalStatus,
                         detail = evaluation.explanation
                     )
-                    publisher.publishClearedNotification(action, rules)
+                    publisher.publishClearedNotification(
+                        action, rules, useFahrenheit = settings.useFahrenheitNow()
+                    )
                 }
 
                 is AlertAction.AlertEnded -> {
@@ -213,11 +218,12 @@ class MonitoringCoordinator(
      * any sample has been taken in it; the publisher renders that as "waiting for
      * a reading" rather than as a zero.
      */
-    private fun refreshMonitoringNotification(sample: DeviceSample?) {
+    private suspend fun refreshMonitoringNotification(sample: DeviceSample?) {
         val notification = publisher.buildMonitoringNotification(
             sample = sample,
             alertLevel = _alertState.value.level,
-            updating = true
+            updating = true,
+            useFahrenheit = settings.useFahrenheitNow()
         )
         publisher.updateMonitoringNotification(notification)
     }

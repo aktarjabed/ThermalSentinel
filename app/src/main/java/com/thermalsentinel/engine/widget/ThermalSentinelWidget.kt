@@ -58,12 +58,14 @@ class ThermalSentinelWidget : GlanceAppWidget() {
         val style = runCatching {
             UiPreferencesRepository(context).preferences.first().widgetStyle
         }.getOrDefault(WidgetStyle.SYSTEM)
+        val useFahrenheit = runCatching { graph.settings.useFahrenheit.first() }.getOrDefault(false)
 
         provideContent {
             WidgetContent(
                 sample = sample,
                 monitoringRunning = monitoringRunning,
                 style = style,
+                useFahrenheit = useFahrenheit,
                 temperatureUnavailable = context.getString(R.string.widget_temperature_unavailable),
                 noData = context.getString(R.string.widget_state_no_data),
                 monitoringOff = context.getString(R.string.widget_state_monitoring_off)
@@ -77,6 +79,7 @@ private fun WidgetContent(
     sample: DeviceSample?,
     monitoringRunning: Boolean,
     style: WidgetStyle,
+    useFahrenheit: Boolean,
     temperatureUnavailable: String,
     noData: String,
     monitoringOff: String
@@ -126,7 +129,7 @@ private fun WidgetContent(
             style = TextStyle(color = secondaryText, fontSize = 11.sp)
         )
         Text(
-            text = temperature?.let { ThermalFormatting.temperatureCelsius(it) } ?: temperatureUnavailable,
+            text = ThermalFormatting.temperature(temperature, fahrenheit = useFahrenheit, unavailable = temperatureUnavailable),
             style = TextStyle(color = primaryText, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         )
         Text(
