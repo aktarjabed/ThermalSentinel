@@ -22,7 +22,9 @@ data class ExportResult(
      * True when the request asked for more than raw retention can serve. The
      * caller must say so rather than presenting a shortened window as complete.
      */
-    val truncatedToRetention: Boolean
+    val truncatedToRetention: Boolean,
+    /** MIME type is carried with the artifact so the chooser receives the correct type. */
+    val mimeType: String = ThermalExportService.MIME_TYPE
 )
 
 /** Export failures are surfaced to the user, never logged and forgotten. */
@@ -101,6 +103,46 @@ class ThermalExportService(
         }
     }
 
+
+    /** Export the same retained raw sample window as structured, versioned JSON. */
+    suspend fun exportSamplesJson(windowMillis: Long): ExportOutcome {
+        val now = clock()
+        val rawRetention = RetentionPolicy.RAW_RETENTION_DAYS * RetentionPolicy.DAY_MILLIS
+        val effectiveWindow = windowMillis.coerceAtMost(rawRetention)
+        val samples = withContext(Dispatchers.IO) {
+            history.samplesSince(now - effectiveWindow)
+        }
+        if (samples.isEmpty()) {
+            return ExportOutcome.Empty(
+                "No samples are stored in the last ${ThermalFormatting.duration(effectiveWindow)}, so there is nothing to export yet."
+            )
+        }
+
+        return try {
+            withContext(Dispatchers.IO) {
+                val directory = File(context.cacheDir, DIRECTORY)
+                if (!directory.exists() && !directory.mkdirs()) {
+                    return@withContext ExportOutcome.Failure("The export directory could not be created.")
+                }
+                pruneOldExports()
+                val label = ThermalFormatting.clock(now, pattern = "yyyyMMdd-HHmm")
+                val file = File(directory, "thermal-history-$label.json")
+                file.writeText(ThermalJson.render(samples.map(CsvRow::from), generatedAtMillis = now))
+                ExportOutcome.Success(
+                    ExportResult(
+                        file = file,
+                        rowCount = samples.size,
+                        windowMillis = effectiveWindow,
+                        truncatedToRetention = windowMillis > rawRetention,
+                        mimeType = JSON_MIME_TYPE
+                    )
+                )
+            }
+        } catch (io: IOException) {
+            ExportOutcome.Failure("Writing the JSON export failed: ${io.message ?: "unknown error"}")
+        }
+    }
+
     /**
      * Share sheet for a finished export. The FileProvider authority is derived
      * from the application id so a debug build cannot hand out the release app's
@@ -110,13 +152,16 @@ class ThermalExportService(
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.engine.files", result.file)
         val windowText = ThermalFormatting.duration(result.windowMillis)
         return Intent(Intent.ACTION_SEND).apply {
-            type = MIME_TYPE
+            type = result.mimeType
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.export_share_title))
+            putExtra(
+                Intent.EXTRA_SUBJECT,
+                context.getString(if (result.mimeType == JSON_MIME_TYPE) R.string.export_json_subject else R.string.export_share_title)
+            )
             putExtra(
                 Intent.EXTRA_TEXT,
                 "${result.rowCount} samples covering the last $windowText. " +
-                    "Empty fields mean the platform did not report that value."
+                    if (result.mimeType == JSON_MIME_TYPE) "Missing measurements are represented as JSON null." else "Empty fields mean the platform did not report that value."
             )
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -145,5 +190,6 @@ class ThermalExportService(
     companion object {
         const val DIRECTORY = "engine-exports"
         const val MIME_TYPE = "text/csv"
+        const val JSON_MIME_TYPE = "application/json"
     }
 }
